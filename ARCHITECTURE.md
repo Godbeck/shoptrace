@@ -79,30 +79,48 @@ server/
 ├── src/
 │   ├── config/
 │   │   └── db.js                  Mongoose connection
+│   ├── config/
+│   │   ├── db.js                  Mongoose connection
+│   │   └── cloudinary.js          Image upload config
 │   ├── models/
 │   │   ├── User.js
 │   │   ├── Shop.js
 │   │   ├── Product.js
 │   │   ├── PriceHistory.js
 │   │   ├── Order.js
-│   │   └── Settings.js
+│   │   ├── Settings.js
+│   │   ├── Counter.js             Atomic sequences (order numbers)
+│   │   ├── Review.js
+│   │   └── PriceAlert.js
 │   ├── controllers/
 │   │   ├── authController.js
 │   │   ├── shopController.js
 │   │   ├── productController.js
-│   │   └── orderController.js
-│   ├── routes/
-│   │   ├── authRoutes.js
-│   │   ├── shopRoutes.js
-│   │   ├── productRoutes.js
-│   │   └── orderRoutes.js
+│   │   ├── orderController.js
+│   │   ├── settingsController.js
+│   │   ├── adminController.js
+│   │   ├── paymentController.js
+│   │   ├── uploadController.js
+│   │   ├── reviewController.js
+│   │   └── priceAlertController.js
+│   ├── routes/                     one file per controller
 │   ├── middleware/
-│   │   └── authMiddleware.js       protect, authorize
+│   │   ├── authMiddleware.js       protect, authorize
+│   │   ├── errorMiddleware.js      notFound, errorHandler
+│   │   └── uploadMiddleware.js     multer, memory storage
 │   ├── utils/
 │   │   ├── generateToken.js
 │   │   ├── generateOrderNumber.js
-│   │   └── deliveryCalculator.js
-│   ├── jobs/                       BullMQ workers (not yet built)
+│   │   ├── deliveryCalculator.js
+│   │   ├── stock.js               reserve / release
+│   │   ├── expireOrders.js        shared by the job and the admin endpoint
+│   │   └── paystack.js
+│   ├── jobs/
+│   │   ├── queue.js               BullMQ queue, no-ops without REDIS_URL
+│   │   ├── handlers.js            the work each job does
+│   │   └── worker.js              separate process: npm run worker
+│   ├── scripts/
+│   │   └── createAdmin.js         npm run seed:admin
 │   └── app.js
 ├── .env                            never committed
 └── package.json
@@ -193,6 +211,23 @@ Product.findOneAndUpdate(
 ```
 
 A null result means another request won the race, and nothing was written.
+
+**The implemented version uses an aggregation-pipeline update rather than `$inc`.** `inStock` is derived from `stockCount` by a `pre('save')` hook, and `findOneAndUpdate` bypasses document middleware — so a plain `$inc` leaves `inStock: true` on a product that has just reached zero. Two `$set` stages in one pipeline let MongoDB recalculate `inStock` from the value it just wrote, inside the same atomic operation:
+
+```js
+Product.findOneAndUpdate(
+  { _id: id, stockCount: { $gte: qty }, isActive: true },
+  [
+    { $set: { stockCount: { $subtract: ['$stockCount', qty] } } },
+    { $set: { inStock: { $gt: ['$stockCount', 0] } } },
+  ],
+  { new: true, updatePipeline: true },
+);
+```
+
+Mongoose 9 requires `updatePipeline: true` before it will pass the array through as an update instead of treating it as a document.
+
+Verified under concurrency: with `stockCount: 2` and six simultaneous checkouts, exactly two succeeded, four received 409, and stock settled on 0.
 
 The same principle applies to `viewCount`, which uses `$inc` so concurrent views cannot overwrite each other.
 
@@ -354,6 +389,69 @@ Base path `/api`. All routes returning or mutating user-owned data require `prot
 | PATCH  | `/:id/status`  | merchant  | Advance own sub-order through state machine             |
 | PATCH  | `/:id/cancel`  | protected | Customer cancels while still pending or accepted        |
 
+### Settings — `/api/settings`
+
+| Method | Path      | Access | Purpose                                        |
+| ------ | --------- | ------ | ---------------------------------------------- |
+| GET    | `/public` | public | Radius and campaign values the clients need    |
+| GET    | `/`       | admin  | Full platform configuration                    |
+| PATCH  | `/`       | admin  | Update config through a dot-path allowlist     |
+
+### Admin — `/api/admin`
+
+| Method | Path                        | Purpose                                 |
+| ------ | --------------------------- | --------------------------------------- |
+| GET    | `/stats`                    | Platform totals and revenue             |
+| GET    | `/shops`                    | Shop list, filter by status or category |
+| PATCH  | `/shops/:id/verify`         | Approve a shop                          |
+| PATCH  | `/shops/:id/suspend`        | Suspend, reason required                |
+| PATCH  | `/shops/:id/subscription`   | Set tier and expiry                     |
+| PATCH  | `/shops/:id/feature`        | Toggle featured                         |
+| GET    | `/users`                    | User list, filter and search            |
+| PATCH  | `/users/:id/role`           | Change a role                           |
+| GET    | `/orders`                   | All orders                              |
+| POST   | `/jobs/expire-orders`       | Run the expiry sweep by hand            |
+| POST   | `/jobs/sync-shop-name/:id`  | Queue a denormalisation repair          |
+
+Every route is behind `router.use(protect, authorize('admin'))`.
+
+### Payments — `/api/payments`
+
+| Method | Path                  | Access    | Purpose                                     |
+| ------ | --------------------- | --------- | ------------------------------------------- |
+| POST   | `/initiate/:orderId`  | protected | Start a Paystack transaction                |
+| GET    | `/verify/:reference`  | protected | Confirm with Paystack after the app returns |
+| POST   | `/webhook`            | signature | Paystack's own notification                 |
+| POST   | `/refund/:orderId`    | admin     | Manual refund                                |
+
+The webhook is mounted in `app.js`, above `express.json()`, with `express.raw()`. It is the only route that does not receive a parsed body — the signature is over the exact bytes Paystack sent.
+
+### Uploads — `/api/uploads`
+
+| Method | Path         | Access   | Purpose                          |
+| ------ | ------------ | -------- | -------------------------------- |
+| POST   | `/products`  | merchant | Up to 5 product images           |
+| POST   | `/shop-logo` | merchant | Shop logo, saved onto the shop   |
+| DELETE | `/`          | merchant | Remove by `publicId` query param |
+
+### Reviews — `/api/reviews`
+
+| Method | Path             | Access    | Purpose                                    |
+| ------ | ---------------- | --------- | ------------------------------------------ |
+| GET    | `/my-reviews`    | protected | Own reviews                                |
+| GET    | `/shop/:shopId`  | public    | A shop's reviews                           |
+| POST   | `/`              | protected | Review a shop after a completed sub-order  |
+| PATCH  | `/:id/reply`     | merchant  | One public reply                            |
+| DELETE | `/:id`           | author    | Remove, recalculates the shop rating        |
+
+### Price alerts — `/api/price-alerts`
+
+| Method | Path   | Access    | Purpose                            |
+| ------ | ------ | --------- | ---------------------------------- |
+| POST   | `/`    | protected | Set or update a target price       |
+| GET    | `/`    | protected | Own alerts                          |
+| DELETE | `/:id` | protected | Remove one                          |
+
 ### Search parameters
 
 `/api/products/search` accepts: `search`, `latitude`, `longitude`, `radius`, `category`, `minPrice`, `maxPrice`, `inStockOnly`, `sort` (`distance` | `priceLow` | `priceHigh` | `newest`), `page`, `limit`.
@@ -425,7 +523,18 @@ JWT_SECRET=<long random string>
 JWT_EXPIRE=30d
 ```
 
-Not yet added: `REDIS_URL`, `PAYSTACK_SECRET_KEY`, `CLOUDINARY_URL`, `RESEND_API_KEY`.
+Also read by the server, all optional — each feature degrades rather than crashing when its variable is missing:
+
+```
+REDIS_URL=rediss://default:<password>@<host>.upstash.io:6379
+PAYSTACK_SECRET_KEY=sk_test_xxx
+PAYSTACK_CALLBACK_URL=shoptrace://payment-complete
+CLOUDINARY_URL=cloudinary://<api_key>:<api_secret>@<cloud_name>
+```
+
+Without `REDIS_URL` the queue no-ops and the expiry sweep is available at `POST /api/admin/jobs/expire-orders`. Without Cloudinary the upload routes return 503. `.env.example` lists all of them.
+
+Not yet added: `RESEND_API_KEY` — the weekly merchant report currently logs instead of emailing.
 
 The database name must be present in the connection string, immediately before the `?`. Omitting it silently writes to a database called `test`.
 
@@ -437,13 +546,13 @@ The database name must be present in the connection string, immediately before t
 
 | Area                     | Current state                                                | Upgrade                                                                       |
 | ------------------------ | ------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| Checkout atomicity       | Manual compensation via `reservations` array                 | MongoDB session transaction                                                   |
-| Order numbering          | `countDocuments() + 1`                                       | Dedicated counter collection — current approach can collide under concurrency |
+| Checkout atomicity       | Manual compensation via `reservations` array                 | MongoDB session transaction — the one remaining gap is a crash mid-rollback   |
+| Order numbering          | Atomic `$inc` on a `counters` document                       | Done — the `countDocuments() + 1` approach was never shipped                   |
 | Price history durability | Written in `post('save')`, not atomic with the product write | Acceptable; history is non-financial                                          |
 | Product search           | `$regex` on name only                                        | Global text-search endpoint using the existing text index                     |
 | Distance accuracy        | Haversine straight-line                                      | Google Distance Matrix for road distance                                      |
 | Pagination               | `$skip` / `$limit`                                           | Cursor-based                                                                  |
 | Payment splitting        | Single payment on parent order                               | Paystack subaccounts per merchant                                             |
-| Reviews                  | Rating fields exist, always `0`                              | Review model, gated on a completed order                                      |
+| Reviews                  | Built, gated on a completed sub-order                        | Photo reviews; recalculation moved to a job if review volume grows            |
 | Delivery consolidation   | One fee per shop                                             | Shared delivery when shops are within ~2km of each other                      |
 | Shop name staleness      | Denormalised copies drift on rename                          | Sync job                                                                      |

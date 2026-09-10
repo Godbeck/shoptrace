@@ -1,6 +1,7 @@
 import Product from "../models/Product.js";
 import Shop from "../models/Shop.js";
 import PriceHistory from "../models/PriceHistory.js";
+import Settings from "../models/Settings.js";
 
 export const createProduct = async (req, res) => {
   try {
@@ -18,6 +19,33 @@ export const createProduct = async (req, res) => {
         .json({
           message: "Your shop must be verified before you can list products",
         });
+    }
+
+    // The subscription gate. The limit comes from settings, not from the shop
+    // document, so raising the free allowance is one edit and not a migration.
+    const settings = await Settings.get();
+    const tier = shop.subscriptionTier || "free";
+    const hasExpired =
+      tier !== "free" &&
+      shop.subscriptionExpiresAt &&
+      shop.subscriptionExpiresAt <= new Date();
+    const effectiveTier = hasExpired ? "free" : tier;
+    const productLimit = settings.subscriptionTiers[effectiveTier].productLimit;
+
+    const currentCount = await Product.countDocuments({
+      shop: shop._id,
+      isActive: true,
+    });
+
+    if (currentCount >= productLimit) {
+      return res.status(403).json({
+        message:
+          `Your ${effectiveTier} plan allows ${productLimit} products. ` +
+          `Upgrade to list more.`,
+        productLimit,
+        currentCount,
+        tier: effectiveTier,
+      });
     }
 
     const {
@@ -120,7 +148,9 @@ export const searchProducts = async (req, res) => {
     }
 
     const sortOptions = {
-      distance: { distance: -1 },
+      // 1 and not -1: $geoNear writes distance in metres, so ascending is
+      // nearest-first. -1 would have shown the furthest shop at the top.
+      distance: { distance: 1 },
       priceLow: { price: 1 },
       priceHigh: { price: -1 },
       newest: { createdAt: -1 },
@@ -148,11 +178,11 @@ export const getProductById = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id).populate(
       "shop",
-      "name address phone location averageRating status offersDelivery deliveryFee",
+      "name address phone location averageRating reviewCount status deliveryRange logoUrl",
     );
 
     if (!product || !product.isActive) {
-      return res.status(400).json({ message: "Product not found" });
+      return res.status(404).json({ message: "Product not found" });
     }
 
     await Product.findByIdAndUpdate(req.params.id, { $inc: { viewCount: 1 } });
@@ -173,9 +203,13 @@ export const getMyProducts = async (req, res) => {
         .json({ message: "You have not registered a shop yet" });
     }
 
-    const products = (
-      await Product.find({ shop: shop._id, isActive: true })
-    ).toSorted({ createdAt: -1 });
+    // .sort() on the query, so MongoDB does the sorting. The previous
+    // Array.prototype.toSorted() call threw - it takes a compare function,
+    // not a Mongoose sort object.
+    const products = await Product.find({
+      shop: shop._id,
+      isActive: true,
+    }).sort({ createdAt: -1 });
 
     res.status(200).json({
       count: products.length,
@@ -234,6 +268,11 @@ export const updateProduct = async (req, res) => {
 export const deleteProduct = async (req, res) => {
   try {
     const shop = await Shop.findOne({ owner: req.user._id });
+
+    if (!shop) {
+      return res.status(404).json({ message: "Shop not found" });
+    }
+
     const product = await Product.findById(req.params.id);
 
     if (!product) {

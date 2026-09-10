@@ -262,41 +262,136 @@ Includes a "things to avoid" list — grey borders, drop shadows, weights above 
 
 ---
 
+## Session 16 — Server completed and tested
+
+The whole remaining server was built in one pass and exercised against Atlas. Everything below was actually run, not just written.
+
+**Built: `models/Counter.js` + `utils/generateOrderNumber.js`.** Order numbers now come from an atomic `$inc` on a counter document rather than `countDocuments() + 1`. The collision risk documented in session 14 was skipped rather than shipped — the counter is about ten lines and strictly correct. Proved under load: six simultaneous checkouts produced six distinct numbers.
+
+**Built: `utils/stock.js`** — `reserveStock`, `releaseStock`, `reservationsFromItems`, shared by the order controller and the expiry job.
+
+**Deviation from the documented `$inc` pattern, deliberately.** Stock writes use an aggregation-pipeline update (two `$set` stages) instead of `$inc`. Reason: `inStock` is derived from `stockCount` by a `pre('save')` hook, and `findOneAndUpdate` bypasses document middleware — so a plain `$inc` would leave `inStock: true` on a product that had just hit zero. The pipeline recalculates `inStock` from the value it just wrote, inside the same atomic operation. Mongoose 9 requires `{ updatePipeline: true }` before it will pass an array through as an update; without it the call throws.
+
+**Gap closed: range → kilometres.** `getRangeMaxDistance` maps `area` / `city` / `nationwide` onto the platform's radius settings. Nothing previously turned the merchant's word into a distance, so checkout had no way to ask "can this shop reach the customer".
+
+**Gap closed: the per-order subsidy cap was unenforceable.** `settings.delivery.freeDelivery.maxSubsidyPerOrder` existed but nothing read it, and `calculateDeliveryFee` had no parameter for it. It now takes a fourth argument, `remainingSubsidyBudget`. Verified across three shops: 25 + 15 + 0 = the 40 cap, instead of 75.
+
+**Built: `orderController.js` and `orderRoutes.js`.** Checkout, customer history, merchant queue, order detail, state machine, cancellation.
+
+Checkout validates and merges duplicate cart lines, fetches every product in one `$in` query, re-checks that each shop is still verified, groups by shop, reserves atomically item by item, snapshots each line, prices delivery per shop, and computes every total server-side.
+
+Failure paths throw a `CheckoutError` rather than returning. That was the design decision that mattered: an early `return` skips the `catch` block, and the `catch` block is what releases reserved stock. One exit path, one rollback.
+
+**Proved the rollback.** An order for 2 phones (in stock) plus 99 bags of cement (only 2 in stock) returned 409 with the cement named, and both products were left at their original counts.
+
+**Proved the atomicity.** Stock set to 2, six simultaneous checkouts fired: exactly two got 201, four got 409, stock landed on 0 and never went negative, `inStock` flipped to false.
+
+**Proved the state machine.** `pending → completed` and `pending → out_for_delivery` both rejected with the allowed transitions listed. The legal path ran through to `completed`. `completed → packed` rejected. A pickup sub-order refused `out_for_delivery` and a delivery sub-order refused `ready_for_pickup`.
+
+**Proved the privacy boundary.** On a two-shop order, `getShopOrders` returned one sub-order, the requesting shop's own, with no `grandTotal` and no trace of the other shop's items. A third merchant not in the order got 403 on both read and update.
+
+**Graceful degradation confirmed.** A Kumasi shop 201km away with `area` range came back as `pickup` with a zero fee rather than an error, exactly as intended.
+
+**Built: `utils/expireOrders.js`** and wired it to both the scheduled job and `POST /api/admin/jobs/expire-orders`, so the sweep can be tested without Redis. Proved it: an unpaid order held 3 units, the sweep released them and set `paymentStatus: 'failed'`, and a second run found 0 orders and did not double-release.
+
+**Built: Settings API.** `GET /api/settings` and `PATCH /api/settings` (admin), plus `GET /api/settings/public` for the clients that legitimately need the radius values to group search results. The PATCH flattens the nested body into dot-paths and checks them against an allowlist, rejecting unknown paths with a 400 rather than ignoring them silently — an admin who typos a field name should be told.
+
+**Built: admin endpoints.** Shop list and filter, verify, suspend (reason required), subscription tier, feature toggle, user list, role change, order list, platform stats, manual expiry sweep, shop-name sync trigger. `router.use(protect, authorize('admin'))` guards the whole router in one line.
+
+**Security bug found and fixed in existing code.** `registerUser` took `role` straight from the request body, so anyone could register as an admin and own the platform. Registration is now limited to `customer` and `merchant`; admins are promoted by an existing admin or seeded with `npm run seed:admin`. Verified: a request asking for `admin` comes back as `customer`.
+
+**Built: Paystack integration.** `utils/paystack.js` (initialize, verify, HMAC-SHA512 signature check, refund), `paymentController.js`, and the webhook.
+
+The webhook is mounted directly in `app.js` above `express.json()` with `express.raw()`. Paystack signs the exact bytes it sent; once `express.json()` has parsed and re-serialised the body those bytes are gone and the signature can never match.
+
+Idempotency is enforced by the query, not by a read-then-write: `findOneAndUpdate({ _id, paymentStatus: { $ne: 'paid' } })`. Both the webhook and the client's verify call can arrive, in either order, and Paystack retries.
+
+Tested: unsigned → 401, forged signature → 401, valid → paid with `paymentMethod: momo` and `expiresAt` cleared, exact replay ignored, and a signed event claiming GH 1.00 against a GH 3,006 order rejected as underpayment.
+
+**Robustness fix during testing.** The webhook originally looked the order up by `paystackReference` alone, which is only set by `initiatePayment`. If that save had failed, a real payment would have been orphaned. Since the reference *is* the order number, the lookup now falls back to `orderNumber` and then to `metadata.orderId`.
+
+**Built: Cloudinary upload.** Multer `memoryStorage` (the file is going straight to Cloudinary, so writing it to disk first is a temp file for nothing), 5MB and 5-file limits, mime allowlist, and resize-on-upload since most users are on mobile data. The upload folder is built from the merchant's own shop id read server-side — a client-supplied folder would let one merchant write into another's.
+
+**Built: `Review` model, controller and routes.** Three gates before a review is accepted: your order, that shop was in it, and that shop's sub-order is `completed`. A unique index on `{ order, shop }` makes duplicates a database error, not a race. `Shop.averageRating` and `reviewCount` are recalculated on every write and delete — the cost of denormalising them.
+
+Tested: refused before completion, accepted after, duplicate rejected as 409, rating summary updated to 5 from 1 review, reviewer's user id absent from the public list, merchant reply saved.
+
+**Built: `PriceAlert` model, controller and routes.** Upsert on `{ customer, product }` so re-setting a target updates the existing alert. Refuses a target at or above the current price.
+
+**Built: BullMQ layer.** `jobs/queue.js` (lazy connection, `maxRetriesPerRequest: null` as BullMQ requires), `jobs/handlers.js`, `jobs/worker.js` as a separate process (`npm run worker`) with `upsertJobScheduler` for the repeatable sweeps.
+
+The whole queue layer no-ops without `REDIS_URL` — `enqueue` returns false and warns, the API runs normally. Confirmed the worker exits with a clear message rather than a stack trace.
+
+**Bug found that only exists in the worker process.** `runCheckPriceAlerts` populates `customer`, but `handlers.js` never imported the `User` model. The API happens to import it via `authMiddleware`, so it works there; the worker is a separate process and threw "Schema hasn't been registered for model User". Fixed with a side-effect import and a comment saying why.
+
+All five handlers tested directly: featured expiry, shop-name sync (3 stale product copies repaired), price alert (fires once, then deactivates, re-run matches 0), weekly report aggregation.
+
+**BullMQ scheduling itself is NOT tested.** No Redis available locally and no Upstash credentials yet. The handlers are proven and the worker imports cleanly, but the queue round-trip, the retry behaviour and the cron schedules have never actually run.
+
+**Bugs found and fixed in previously "tested" code:**
+
+| Bug | Effect |
+| --- | --- |
+| `sortOptions.distance` was `{ distance: -1 }` | `sort=distance` returned the **furthest** products first — the default sort on the main search |
+| `getMyProducts` used `.toSorted({ createdAt: -1 })` | `Array.prototype.toSorted` takes a compare function, not a sort object. The endpoint threw every time it was called |
+| `getProductById` returned 400 for a missing product | Should be 404 |
+| `getProductById` populated `offersDelivery deliveryFee` | Fields being removed; now `deliveryRange` |
+| `deleteProduct` read `shop._id` with no null check | 500 instead of 404 for a merchant with no shop |
+| `registerUser` trusted `role` from the body | Anyone could self-register as an admin |
+
+**Removed `offersDelivery` and `deliveryFee` from the Shop model.** Session 13 recorded that `deliveryRange` replaced `offersDelivery`, but both were still on the schema — leaving a merchant-editable `deliveryFee` field, directly contradicting the platform-sets-pricing rule.
+
+**Added the subscription limit check to `createProduct`.** Architecture called it "a single check in createProduct" and it was absent. Reads the limit from settings, and treats an expired paid tier as free. Tested: free limit lowered to 2, third product rejected with the upgrade message, allowed after an admin upgrade to growth.
+
+**Added `PATCH /api/shops/my-shop`** with an allowlist that deliberately excludes `status`, `isFeatured`, `subscriptionTier` and `verifiedAt`. A rename queues the shop-name sync job.
+
+**Added `middleware/errorMiddleware.js`** — `notFound` plus an error handler that turns a bad ObjectId into 400, a validation error into 400 and a duplicate key into 409 instead of the 500 they were all producing.
+
+**Fixed the port fallback.** `app.js` said `process.env.PORT || 5000` while every doc and `.env` said 4000.
+
+**Added `.env.example`** and the `start`, `worker`, `worker:dev` and `seed:admin` scripts.
+
+**Test data left in Atlas.** The end-to-end runs created real documents in the `shoptrace` database — roughly a dozen users on `@t.com` / `@test.com` addresses, six shops, a handful of products, six orders (`ST-00001` to `ST-00006`), one review and one price alert. Worth clearing before real data goes in.
+
+---
+
 ## Current state
 
 **Working and tested:**
 
-- Express API on port 4000, MongoDB Atlas connected
-- Register, login, JWT issuance, `protect` and `authorize` middleware
-- Shop registration, geospatial nearby search proven across a 200km distance
-- Product CRUD with ownership checks, aggregation search with filters and sort, automatic price history via hooks
+- Express API on port 4000, MongoDB Atlas connected, error middleware, health endpoint
+- Register, login, JWT, `protect` and `authorize`; role escalation via registration closed
+- Shop registration, geospatial nearby search, merchant shop editing
+- Product CRUD, aggregation search, price history hooks, subscription product limit
+- Settings API — read, public read, admin patch with a nested allowlist
+- Admin API — shop approval and suspension, subscriptions, users and roles, platform stats
+- Checkout — atomic reservation, rollback, multi-shop sub-orders, snapshots, server-side pricing
+- Order state machine, delivery/pickup guards, status history, customer cancellation
+- Merchant privacy boundary on multi-shop orders
+- Order expiry sweep, via the admin endpoint
+- Paystack — initialize, verify, signed webhook, idempotency, underpayment rejection, refund endpoint
+- Reviews gated on a completed sub-order, with rating recalculation
+- Price alerts, and all five job handlers run directly
 
-**In the repo but not exercised:**
+**Written but not exercised:**
 
-- `Settings` model and subscription tier fields — nothing calls `Settings.get()` yet, so the collection doesn't exist
-- `deliveryCalculator.js` — no endpoint reaches it
-- `Order` model — no documents created yet
-
-**Designed but not written into the repo:**
-
-- `generateOrderNumber.js`
-- `orderController.js` and `orderRoutes.js` — the full checkout flow, atomic stock reservation, rollback path, state machine, and merchant order queue
+- BullMQ queue round-trip, retries and cron schedules — no Redis available yet, so `npm run worker` has never successfully connected
+- Cloudinary upload — no credentials configured; the code path returns 503 without them
+- Paystack `initiatePayment` and `refundOrder` against the real API — only the webhook and the local signature logic have been tested, with a fake key
 
 **Not started:**
 
-- Settings API endpoints (`GET` / `PATCH /api/settings`, admin only)
-- Admin endpoints for shop approval and merchant management
-- Paystack integration and payment webhooks
-- Cloudinary image upload
-- BullMQ jobs — order expiry sweep is the most urgent, since abandoned checkouts would otherwise hold stock indefinitely
-- Review model
-- PriceAlert model
 - Mobile app
 - Admin dashboard
+- `packages/shared`
+- Automated test suite — everything above was proved with curl scripts, which are not repeatable in CI
+- Push notifications (the price alert handler logs instead of notifying)
+- Email (the weekly report handler logs instead of sending)
 
 **Immediate next steps:**
 
-1. Write and test the order controller. The two things that need proving are the rollback path (over-order and confirm stock is unchanged afterwards) and the state machine (attempt an illegal transition and confirm it's rejected)
-2. Settings API endpoints — so platform config is editable without Compass
-3. Order expiry job — closes the stuck-stock gap
-4. Paystack integration — orders currently have to be marked paid by hand
+1. Create an Upstash Redis database, set `REDIS_URL`, and confirm `npm run worker` connects and the minute-by-minute expiry sweep actually fires
+2. Add Cloudinary credentials and upload one real product image
+3. Put a real Paystack test key in `.env` and complete one sandbox Mobile Money payment end to end, with the webhook pointed at a tunnel
+4. Clear the test data out of Atlas
+5. Convert the curl scripts into a supertest suite before the mobile app starts changing the API

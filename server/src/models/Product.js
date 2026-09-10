@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import PriceHistory from "./PriceHistory.js";
+import { enqueueQuietly, JOBS } from "../jobs/queue.js";
 
 const productSchema = new mongoose.Schema(
     {
@@ -116,12 +117,25 @@ productSchema.post('save', async function (doc) {
     if (!doc.$locals.priceChanged) {
         return;
     }
+    const oldPrice = doc.$locals.oldPrice;
+
     await PriceHistory.create({
         product: doc._id,
         shop: doc.shop,
         price: doc.price,
-        previousPrice: doc.$locals.oldPrice,
+        previousPrice: oldPrice,
     });
+
+    // A drop, specifically - nobody set an alert hoping for a price rise.
+    // enqueueQuietly and not await: a queue that is down must never stop a
+    // merchant from saving a price.
+    if (oldPrice !== null && oldPrice !== undefined && doc.price < oldPrice) {
+        enqueueQuietly(JOBS.CHECK_PRICE_ALERTS, {
+            productId: doc._id.toString(),
+            price: doc.price,
+        });
+    }
+
     // Keep the baseline current for any further saves on this same instance.
     doc.$locals.persistedPrice = doc.get('price');
     doc.$locals.priceChanged = false;

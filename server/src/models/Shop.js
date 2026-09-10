@@ -48,14 +48,6 @@ const shopSchema = new mongoose.Schema(
       type: String,
       default: "Mon - Sat, 8:00am - 6:00pm",
     },
-    offersDelivery: {
-      type: Boolean,
-      default: false,
-    },
-    deliveryFee: {
-      type: Number,
-      default: 0,
-    },
     status: {
       type: String,
       enum: ["pending", "verified", "suspended"],
@@ -73,6 +65,9 @@ const shopSchema = new mongoose.Schema(
     subscriptionExpiresAt: {
       type: Date,
     },
+    // The merchant's only delivery choice. The kilometre value each word
+    // maps to is platform-controlled - see getRangeMaxDistance. There is
+    // deliberately no deliveryFee field here: merchants never set fees.
     deliveryRange: {
       type: String,
       enum: ["none", "area", "city", "nationwide"],

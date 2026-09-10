@@ -115,17 +115,20 @@ These are established and load-bearing. Don't deviate without saying why.
 
 **Counters use `$inc`, never read-modify-write.** Two concurrent views both reading 10 and both writing 11 loses a view.
 
-**Stock changes are atomic and conditional:**
+**Stock changes are atomic and conditional.** Use `reserveStock` / `releaseStock` from `utils/stock.js`, never a hand-written update:
 
 ```js
 Product.findOneAndUpdate(
   { _id: id, stockCount: { $gte: qty }, isActive: true },
-  { $inc: { stockCount: -qty } },
-  { new: true },
+  [
+    { $set: { stockCount: { $subtract: ['$stockCount', qty] } } },
+    { $set: { inStock: { $gt: ['$stockCount', 0] } } },
+  ],
+  { new: true, updatePipeline: true },
 );
 ```
 
-A null result means another request won the race.
+A null result means another request won the race. It is a pipeline update rather than `$inc` because `findOneAndUpdate` bypasses the `pre('save')` hook that derives `inStock`, so a plain `$inc` would leave `inStock: true` on a product that just hit zero. Mongoose 9 needs `updatePipeline: true` or it throws.
 
 **GeoJSON coordinates are `[longitude, latitude]`.** Clients send `latitude` and `longitude` as named fields; the server flips them. Getting this wrong puts Accra shops in the Indian Ocean.
 
@@ -135,9 +138,23 @@ A null result means another request won the race.
 
 **Order items are snapshots, not references.** An `OrderItem` stores its own copy of name, brand, price, and image. The `product` ObjectId is kept only for linking back. An order must display correctly a year later regardless of what happened to the product.
 
+**Identity and role never come from the request body.** Registration accepts only `customer` and `merchant`; `admin` is granted by an existing admin or by `npm run seed:admin`. This was a real hole — `role: 'admin'` in a register body used to work.
+
+**Money that reaches a payment provider is recomputed from the database.** `initiatePayment` reads `order.grandTotal`; an amount in the request body is ignored. Paystack works in pesewas, so every amount goes through `toPesewas`.
+
+**Payment writes are idempotent through the query.** `findOneAndUpdate({ _id, paymentStatus: { $ne: 'paid' } })`, never read-then-write. The webhook and the client's verify call both arrive, in either order, and Paystack retries.
+
+**The Paystack webhook needs the raw body.** It is mounted in `app.js` above `express.json()` with `express.raw()`. Once the body is parsed and re-serialised the signature can never match.
+
+**Job enqueues must never break the request.** Use `enqueueQuietly` from `jobs/queue.js` in hooks and controllers. The whole queue layer no-ops without `REDIS_URL`.
+
+**A model used only inside a job still has to be imported by `jobs/handlers.js`.** The worker is a separate process, so nothing else registers the schema. This bit once, on `.populate('customer')`.
+
 **Platform config lives in the `settings` singleton, not in code constants.** Delivery pricing, fee percentages, subscription limits, order timeout. Changing pricing is an admin action, not a deploy. Access it via `Settings.get()`.
 
-**Merchants never set delivery fees or distances.** They get one three-option range selector (`area` / `city` / `nationwide`) that maps to platform-defined kilometre values.
+**Merchants never set delivery fees or distances.** They get one three-option range selector (`area` / `city` / `nationwide`) that maps to platform-defined kilometre values via `getRangeMaxDistance`. There is deliberately no `deliveryFee` field on the Shop model.
+
+**Order numbers come from `Counter.next('orderNumber')`**, an atomic `$inc`. Never `countDocuments() + 1`.
 
 **A merchant sees only their own sub-order.** Multi-shop orders mean other shops' items are in the same document. `getShopOrders` reshapes the response to strip them. This is a privacy boundary.
 
@@ -181,44 +198,31 @@ Full spec is in the design specification document. The essentials:
 
 ## Current state
 
-**Working and tested:**
+The server is feature-complete and exercised against Atlas. See `BUILD_LOG.md` session 16 for what was proved and how.
 
-- Express API, MongoDB Atlas connection
-- Register, login, JWT, `protect` and `authorize` middleware
-- Shop registration and geospatial nearby search, proven across 200km
-- Product CRUD, aggregation search with filters and sort, automatic price history via hooks
+**Working and tested:** auth with role escalation closed, shops and geospatial search, product CRUD and search and price history, subscription limits, settings API, admin API, checkout with atomic reservation and proven rollback, order state machine, merchant privacy boundary, expiry sweep, Paystack webhook with signature verification and idempotency, reviews gated on completion, price alerts, all five job handlers run directly.
 
-**Written but not yet implemented or tested:**
+**Written but never actually run:**
 
-- `Settings` model, delivery calculator, `Order` model
-- Order controller and routes — checkout with atomic stock reservation, rollback, state machine, merchant queue
+- BullMQ queue round-trip, retries and cron schedules — no `REDIS_URL` yet, so `npm run worker` has never connected
+- Cloudinary uploads — no credentials; the routes return 503 without them
+- Paystack `initiatePayment` and `refundOrder` against the live sandbox — only the webhook and local signature logic are proven
 
-**Not started:**
-
-- Settings API endpoints
-- Admin endpoints for shop approval and merchant management
-- Paystack integration and payment webhooks
-- Cloudinary image upload
-- BullMQ jobs — the order expiry sweep is the most urgent, since abandoned checkouts otherwise hold stock indefinitely
-- Review model, PriceAlert model
-- Mobile app, admin dashboard
+**Not started:** mobile app, admin dashboard, `packages/shared`, an automated test suite, push notifications, email.
 
 **Immediate next steps:**
 
-1. Implement and test the order controller — the rollback path and the state machine are the two things that need proving
-2. Settings API endpoints, so platform config is editable without Compass
-3. Order expiry job
-4. Paystack integration — orders currently have to be marked paid by hand in Compass
-
----
+1. Upstash Redis, set `REDIS_URL`, confirm the worker connects and the minute-by-minute sweep fires
+2. Cloudinary credentials, upload one real image
+3. Real Paystack test key, one sandbox MoMo payment with the webhook on a tunnel
+4. Clear the end-to-end test data out of Atlas
+5. Convert the curl scripts into supertest before the mobile app starts changing the API
 
 ## Known simplifications
 
 Named honestly so they aren't mistaken for oversights. Full table in `ARCHITECTURE.md`.
 
 **Checkout rollback is manual compensation, not a transaction.** A `reservations` array accumulates successful stock reservations and releases them on failure. Readable, and chosen deliberately for learning — but a process crash between reservation and rollback leaves stock stuck. MongoDB sessions are the upgrade, and Atlas M0 supports them.
-
-**Order numbers use `countDocuments() + 1`.** Can collide under concurrency; a dedicated counter collection is the fix.
 
 **Distance is Haversine straight-line**, which under-estimates road distance by roughly 30% in a city.
 

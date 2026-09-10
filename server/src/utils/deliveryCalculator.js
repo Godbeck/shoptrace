@@ -1,5 +1,26 @@
 import Settings from "../models/Settings.js";
 
+const round = (value) => Math.round(value * 100) / 100;
+
+/**
+ * A merchant picks a word; the platform decides what that word means in
+ * metres. This is the whole reason merchants never type a distance.
+ *
+ * 'none' returns 0, which means no distance can ever satisfy it - pickup only.
+ */
+export const getRangeMaxDistance = (deliveryRange, settings) => {
+  switch (deliveryRange) {
+    case "area":
+      return settings.delivery.neighbourhoodRadius;
+    case "city":
+      return settings.delivery.cityRadius;
+    case "nationwide":
+      return Infinity;
+    default:
+      return 0;
+  }
+};
+
 export const getDeliveryTier = (distanceMeters, settings) => {
   if (distanceMeters <= settings.delivery.neighbourhoodRadius) {
     return { tier: "neighbourhood", estimate: "Delivery today" };
@@ -10,16 +31,28 @@ export const getDeliveryTier = (distanceMeters, settings) => {
   return { tier: "regional", estimate: "Delivery in 2-4 days" };
 };
 
+/**
+ * Price one shop's delivery.
+ *
+ * `settings` is optional so a multi-shop checkout can fetch the config once
+ * and pass it in, instead of hitting the database per shop.
+ *
+ * `remainingSubsidyBudget` is what makes settings.delivery.freeDelivery
+ * .maxSubsidyPerOrder real. On a three-shop order the caller passes what is
+ * left of the per-order cap, so the platform cannot be billed three full
+ * subsidies for one basket.
+ */
 export const calculateDeliveryFee = async (
   distanceMeters,
   subtotal,
   settings = null,
+  remainingSubsidyBudget = Infinity,
 ) => {
   const config = settings || (await Settings.get());
   const { baseFee, perKmRate, freeDelivery } = config.delivery;
 
   const distanceKm = distanceMeters / 1000;
-  const rawFee = Math.round((baseFee + distanceKm * perKmRate) * 100) / 100;
+  const rawFee = round(baseFee + distanceKm * perKmRate);
 
   const now = new Date();
   const withinWindow =
@@ -29,6 +62,7 @@ export const calculateDeliveryFee = async (
   const qualifies =
     freeDelivery.enabled &&
     withinWindow &&
+    remainingSubsidyBudget > 0 &&
     subtotal >= freeDelivery.minOrderValue &&
     distanceMeters <= freeDelivery.maxDistance;
 
@@ -36,12 +70,20 @@ export const calculateDeliveryFee = async (
     return { fee: rawFee, rawFee, subsidy: 0, isFree: false };
   }
 
-  const subsidy = Math.min(rawFee, freeDelivery.maxSubsidy);
-  const fee = Math.round((rawFee - subsidy) * 100) / 100;
+  // Three ceilings apply at once: the fee itself, the per-shop cap, and
+  // whatever is left of the per-order cap. The smallest one wins.
+  const subsidy = round(
+    Math.min(rawFee, freeDelivery.maxSubsidy, remainingSubsidyBudget),
+  );
+  const fee = round(rawFee - subsidy);
 
   return { fee, rawFee, subsidy, isFree: fee === 0 };
 };
 
+/**
+ * Straight-line distance between two [longitude, latitude] pairs, in metres.
+ * Haversine - under-estimates real road distance by roughly 30% in a city.
+ */
 export const getDistanceMeters = (coords1, coords2) => {
   const [lng1, lat1] = coords1;
   const [lng2, lat2] = coords2;

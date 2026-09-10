@@ -15,12 +15,19 @@ export const registerUser = async (req, res) => {
             return res.status(400).json({ message: 'User already exists' });
         }
 
+        // Only these two roles may be self-assigned. Taking the role straight
+        // from req.body let anyone register as an admin and hand themselves
+        // the whole platform. Admins are promoted by an existing admin, or
+        // seeded with `npm run seed:admin`.
+        const SELF_SERVE_ROLES = ['customer', 'merchant'];
+        const requestedRole = SELF_SERVE_ROLES.includes(role) ? role : 'customer';
+
         const user = await User.create({
             name,
             email,
             phone,
             password,
-            role: role || 'customer',
+            role: requestedRole,
         })
 
         res.status(201).json({

@@ -13,6 +13,7 @@ import {
   queueShopNameSync,
 } from "../controllers/adminController.js";
 import { protect, authorize } from "../middleware/authMiddleware.js";
+import validateObjectId from "../middleware/validateObjectId.js";
 
 const router = express.Router();
 
@@ -23,17 +24,17 @@ router.use(protect, authorize("admin"));
 router.get("/stats", getPlatformStats);
 
 router.get("/shops", getShops);
-router.patch("/shops/:id/verify", verifyShop);
-router.patch("/shops/:id/suspend", suspendShop);
-router.patch("/shops/:id/subscription", setShopSubscription);
-router.patch("/shops/:id/feature", featureShop);
+router.patch("/shops/:id/verify", validateObjectId(), verifyShop);
+router.patch("/shops/:id/suspend", validateObjectId(), suspendShop);
+router.patch("/shops/:id/subscription", validateObjectId(), setShopSubscription);
+router.patch("/shops/:id/feature", validateObjectId(), featureShop);
 
 router.get("/users", getUsers);
-router.patch("/users/:id/role", updateUserRole);
+router.patch("/users/:id/role", validateObjectId(), updateUserRole);
 
 router.get("/orders", getAllOrders);
 
 router.post("/jobs/expire-orders", runExpirySweep);
-router.post("/jobs/sync-shop-name/:id", queueShopNameSync);
+router.post("/jobs/sync-shop-name/:id", validateObjectId(), queueShopNameSync);
 
 export default router;

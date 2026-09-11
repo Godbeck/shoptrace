@@ -1,5 +1,6 @@
 import PriceAlert from "../models/PriceAlert.js";
 import Product from "../models/Product.js";
+import { sendError } from "../utils/apiError.js";
 
 // POST /api/price-alerts
 export const createPriceAlert = async (req, res) => {
@@ -46,8 +47,7 @@ export const createPriceAlert = async (req, res) => {
 
     res.status(201).json(alert);
   } catch (error) {
-    console.error("createPriceAlert error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "createPriceAlert error:");
   }
 };
 
@@ -60,8 +60,7 @@ export const getMyPriceAlerts = async (req, res) => {
 
     res.status(200).json({ count: alerts.length, alerts });
   } catch (error) {
-    console.error("getMyPriceAlerts error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "getMyPriceAlerts error:");
   }
 };
 
@@ -81,7 +80,6 @@ export const deletePriceAlert = async (req, res) => {
 
     res.status(200).json({ message: "Alert removed" });
   } catch (error) {
-    console.error("deletePriceAlert error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "deletePriceAlert error:");
   }
 };

@@ -2,6 +2,7 @@ import Product from "../models/Product.js";
 import Shop from "../models/Shop.js";
 import PriceHistory from "../models/PriceHistory.js";
 import Settings from "../models/Settings.js";
+import { sendError } from "../utils/apiError.js";
 
 export const createProduct = async (req, res) => {
   try {
@@ -81,8 +82,7 @@ export const createProduct = async (req, res) => {
 
     res.status(201).json(product);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Internal server error" });
+    return sendError(res, error, "createProduct error:");
   }
 };
 
@@ -170,7 +170,7 @@ export const searchProducts = async (req, res) => {
       products,
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return sendError(res, error, "searchProducts error:");
   }
 };
 
@@ -189,7 +189,7 @@ export const getProductById = async (req, res) => {
 
     res.status(200).json(product);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return sendError(res, error, "getProductById error:");
   }
 };
 
@@ -216,7 +216,7 @@ export const getMyProducts = async (req, res) => {
       products,
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return sendError(res, error, "getMyProducts error:");
   }
 };
 
@@ -261,7 +261,7 @@ export const updateProduct = async (req, res) => {
 
     res.status(200).json(product);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return sendError(res, error, "updateProduct error:");
   }
 };
 
@@ -290,7 +290,7 @@ export const deleteProduct = async (req, res) => {
 
     res.status(200).json({ message: "Product removed" });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return sendError(res, error, "deleteProduct error:");
   }
 };
 
@@ -305,6 +305,6 @@ export const getPriceHistory = async (req, res) => {
       history,
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return sendError(res, error, "getPriceHistory error:");
   }
 };

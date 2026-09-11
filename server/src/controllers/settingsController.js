@@ -1,4 +1,5 @@
 import Settings from "../models/Settings.js";
+import { sendError } from "../utils/apiError.js";
 
 /**
  * The allowlist, as dot-paths. Same idea as allowedFields on a product update,
@@ -63,8 +64,7 @@ export const getSettings = async (req, res) => {
     const settings = await Settings.get();
     res.status(200).json(settings);
   } catch (error) {
-    console.error("getSettings error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "getSettings error:");
   }
 };
 
@@ -96,8 +96,7 @@ export const getPublicSettings = async (req, res) => {
       orderTimeoutMinutes: settings.orderTimeoutMinutes,
     });
   } catch (error) {
-    console.error("getPublicSettings error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "getPublicSettings error:");
   }
 };
 
@@ -162,7 +161,6 @@ export const updateSettings = async (req, res) => {
 
     res.status(200).json(settings);
   } catch (error) {
-    console.error("updateSettings error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "updateSettings error:");
   }
 };

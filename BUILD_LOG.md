@@ -355,43 +355,82 @@ All five handlers tested directly: featured expiry, shop-name sync (3 stale prod
 
 ---
 
+## Session 17 — Postman collection, and two systemic bugs it exposed
+
+Built a full Postman collection so the API can be tested by hand before the mobile app starts, then ran it with `newman` — which is what turned up the bugs below.
+
+**Built: `server/postman/`** — collection, environment and a README. 172 requests across 16 folders, 255 assertions. Real Ghanaian test data throughout: Osu and Madina in Accra, Adum in Kumasi, an Infinix Hot 40i at GH₵ 1,450.50, Ghacem cement, MTN and Vodafone number prefixes.
+
+Test scripts capture every token and id into environment variables, so no request needs an id pasted by hand. Folders run in dependency order, because the order is real — a product cannot be listed until a shop is verified, and a merchant cannot see an order until it is paid.
+
+The signed-webhook requests build their body in a pre-request script and sign it with `CryptoJS.HmacSHA512`, storing the result in a variable that the request body then references. That means what gets signed is byte-for-byte what gets sent — and it works with no Paystack account at all.
+
+**Verified: 172/172 requests, 255/255 assertions, twice in a row.** The second run proves it is re-runnable; `runId` keeps emails unique.
+
+**Bug found and fixed: every Mongoose validation error was a 500.**
+
+A three-character password returned `500 Server error` instead of "Password must be at least 6 characters long". A bad category enum, a negative price — all 500s. The cause: every controller wraps its work in its own `try/catch` and answered with a 500, so a `ValidationError` never reached the `errorHandler` written to classify it.
+
+Fixed with `utils/apiError.js` — `classifyError` decides what an error means, and `sendError` is what controllers now call in their catch blocks. `errorMiddleware` uses the same `classifyError`, so one failure gets one status code wherever it surfaces. 42 catch blocks across 8 controllers were converted.
+
+This one mattered more than it looks: the mobile app would have had nothing useful to show a user who typed a short password.
+
+**Bug found and fixed: a malformed id was a 500 that leaked Mongoose internals.**
+
+`GET /api/products/not-a-real-id` returned `500 Cast to ObjectId failed for value "not-a-real-id" (type string) at path "_id" for model "Product"`. Same root cause — the controller caught the `CastError` itself.
+
+Fixed with `middleware/validateObjectId.js`, applied to all 19 routes carrying an id parameter. It rejects a bad id with a clean 400 *before* the controller runs, which also saves a pointless database round trip. Note this means the claim in session 16 that the error middleware handled bad ids was wrong in practice — it was never reached.
+
+**Also added:** an explicit rating range check in `createReview`, so a rating of 9 returns a 400 naming the range rather than relying on schema validation.
+
+**Bugs in the collection itself, found by running it:**
+
+- Every request 404'd at first. The URL was an object with a `path` array but no `host`, so Newman rebuilt it and dropped the host entirely — `http:///api/shops`. Fixed by using a plain URL string, which Postman parses on import and still populates the Params tab from.
+- Every webhook returned 401 because the `x-paystack-signature` header was never attached — the pre-request script computed the signature but nothing sent it.
+- Three assertions raced the webhook. It answers Paystack immediately and finishes the database write just after, which is deliberate. Clicking through by hand you would never notice; an automated run reads the order before the write lands. Those three requests now wait first, with a comment explaining why.
+- One assertion expected `count: 0` for hidden pending shops, which failed because earlier test runs had left verified shops near those coordinates. Now asserted per-shop rather than on the total.
+
+**Test data note.** Each full run creates 6 users, 3 shops, 4-5 products, 3 orders, a review and a price alert. Re-running is safe but the data accumulates.
+
+---
+
 ## Current state
 
-**Working and tested:**
+**Working and tested — 172 Postman requests, 255 assertions, all passing:**
 
-- Express API on port 4000, MongoDB Atlas connected, error middleware, health endpoint
-- Register, login, JWT, `protect` and `authorize`; role escalation via registration closed
-- Shop registration, geospatial nearby search, merchant shop editing
-- Product CRUD, aggregation search, price history hooks, subscription product limit
-- Settings API — read, public read, admin patch with a nested allowlist
-- Admin API — shop approval and suspension, subscriptions, users and roles, platform stats
-- Checkout — atomic reservation, rollback, multi-shop sub-orders, snapshots, server-side pricing
-- Order state machine, delivery/pickup guards, status history, customer cancellation
+- Express API on port 4000, MongoDB Atlas, error middleware, health endpoint
+- Register, login, JWT, `protect` and `authorize`; role escalation closed
+- Shop registration, geospatial search proven at 5km vs 300km, shop editing
+- Product CRUD, aggregation search, price history hooks, subscription limits
+- Settings API — public read, admin read, admin patch with a nested allowlist
+- Admin API — approval, suspension, subscriptions, roles, stats
+- Checkout — atomic reservation, proven rollback, multi-shop sub-orders, pickup fallback
+- Order state machine, delivery/pickup guards, status history, cancellation
 - Merchant privacy boundary on multi-shop orders
-- Order expiry sweep, via the admin endpoint
-- Paystack — initialize, verify, signed webhook, idempotency, underpayment rejection, refund endpoint
+- Order expiry sweep via the admin endpoint, with no double-release
+- Paystack — signed webhook, idempotency, underpayment rejection
 - Reviews gated on a completed sub-order, with rating recalculation
 - Price alerts, and all five job handlers run directly
+- Validation and cast errors now return 400 with usable messages
 
 **Written but not exercised:**
 
-- BullMQ queue round-trip, retries and cron schedules — no Redis available yet, so `npm run worker` has never successfully connected
-- Cloudinary upload — no credentials configured; the code path returns 503 without them
-- Paystack `initiatePayment` and `refundOrder` against the real API — only the webhook and the local signature logic have been tested, with a fake key
+- BullMQ queue round-trip, retries and cron schedules — no Redis yet, so `npm run worker` has never connected
+- Cloudinary upload — no credentials; the routes return 503 without them
+- Paystack `initiatePayment`, `verifyPayment` and `refundOrder` against the real sandbox
 
 **Not started:**
 
 - Mobile app
 - Admin dashboard
 - `packages/shared`
-- Automated test suite — everything above was proved with curl scripts, which are not repeatable in CI
-- Push notifications (the price alert handler logs instead of notifying)
-- Email (the weekly report handler logs instead of sending)
+- Push notifications (the price alert handler logs instead)
+- Email (the weekly report handler logs instead)
 
 **Immediate next steps:**
 
-1. Create an Upstash Redis database, set `REDIS_URL`, and confirm `npm run worker` connects and the minute-by-minute expiry sweep actually fires
-2. Add Cloudinary credentials and upload one real product image
-3. Put a real Paystack test key in `.env` and complete one sandbox Mobile Money payment end to end, with the webhook pointed at a tunnel
-4. Clear the test data out of Atlas
-5. Convert the curl scripts into a supertest suite before the mobile app starts changing the API
+1. Upstash Redis, set `REDIS_URL`, confirm `npm run worker` connects and the minute-by-minute sweep fires
+2. Cloudinary credentials, then upload one real product image
+3. A real Paystack test key plus a tunnel for the webhook, then one sandbox Mobile Money payment end to end
+4. Clear the accumulated test data out of Atlas
+5. Start the mobile app — the API surface is stable and documented

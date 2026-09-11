@@ -8,6 +8,7 @@ import {
   cancelOrder,
 } from "../controllers/orderController.js";
 import { protect, authorize } from "../middleware/authMiddleware.js";
+import validateObjectId from "../middleware/validateObjectId.js";
 
 const router = express.Router();
 
@@ -16,8 +17,14 @@ const router = express.Router();
 router.post("/", protect, createOrder);
 router.get("/my-orders", protect, getMyOrders);
 router.get("/shop-orders", protect, authorize("merchant"), getShopOrders);
-router.get("/:id", protect, getOrderById);
-router.patch("/:id/status", protect, authorize("merchant"), updateSubOrderStatus);
-router.patch("/:id/cancel", protect, cancelOrder);
+router.get("/:id", protect, validateObjectId(), getOrderById);
+router.patch(
+  "/:id/status",
+  protect,
+  authorize("merchant"),
+  validateObjectId(),
+  updateSubOrderStatus,
+);
+router.patch("/:id/cancel", protect, validateObjectId(), cancelOrder);
 
 export default router;

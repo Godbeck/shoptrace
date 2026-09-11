@@ -1,5 +1,6 @@
 import Shop from '../models/Shop.js';
 import { enqueueQuietly, JOBS } from '../jobs/queue.js';
+import { sendError } from '../utils/apiError.js';
 
 export const createShop = async (req, res) => {
     try {
@@ -33,8 +34,7 @@ export const createShop = async (req, res) => {
         })
         res.status(201).json({ message: 'Shop created successfully', shop });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: 'Internal server error' });
+        return sendError(res, error, "createShop error:");
     }
 }
 
@@ -70,8 +70,7 @@ export const getNearbyShops = async (req, res) => {
             shops,
          });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: 'Internal server error' });
+        return sendError(res, error, "getNearbyShops error:");
 }}
 
 export const getMyShop =async (req, res) =>{
@@ -82,8 +81,7 @@ export const getMyShop =async (req, res) =>{
         }
         res.status(200).json({ shop });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: 'Internal server error' });
+        return sendError(res, error, "getMyShop error:");
     }
 }
 
@@ -139,8 +137,7 @@ export const updateMyShop = async (req, res) => {
 
         res.status(200).json({ message: 'Shop updated', shop });
     } catch (error) {
-        console.error('updateMyShop error:', error);
-        res.status(500).json({ message: 'Internal server error' });
+        return sendError(res, error, "updateMyShop error:");
     }
 }
 
@@ -152,7 +149,6 @@ export const getShopById = async (req, res) => {
         }
         res.status(200).json({ shop });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: 'Internal server error' });
+        return sendError(res, error, "getShopById error:");
     }
 }

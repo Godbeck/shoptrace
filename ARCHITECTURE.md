@@ -107,11 +107,13 @@ server/
 │   ├── middleware/
 │   │   ├── authMiddleware.js       protect, authorize
 │   │   ├── errorMiddleware.js      notFound, errorHandler
+│   │   ├── validateObjectId.js     rejects a bad :id with 400
 │   │   └── uploadMiddleware.js     multer, memory storage
 │   ├── utils/
 │   │   ├── generateToken.js
 │   │   ├── generateOrderNumber.js
 │   │   ├── deliveryCalculator.js
+│   │   ├── apiError.js            classifyError, sendError
 │   │   ├── stock.js               reserve / release
 │   │   ├── expireOrders.js        shared by the job and the admin endpoint
 │   │   └── paystack.js
@@ -122,7 +124,9 @@ server/
 │   ├── scripts/
 │   │   └── createAdmin.js         npm run seed:admin
 │   └── app.js
+├── postman/                        172-request collection + environment
 ├── .env                            never committed
+├── .env.example
 └── package.json
 ```
 

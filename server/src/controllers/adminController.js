@@ -5,6 +5,7 @@ import Order from "../models/Order.js";
 import Settings from "../models/Settings.js";
 import { expireOrders } from "../utils/expireOrders.js";
 import { enqueue, JOBS } from "../jobs/queue.js";
+import { sendError } from "../utils/apiError.js";
 
 // GET /api/admin/shops?status=pending
 export const getShops = async (req, res) => {
@@ -29,8 +30,7 @@ export const getShops = async (req, res) => {
 
     res.status(200).json({ count: shops.length, total, page, shops });
   } catch (error) {
-    console.error("getShops error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "getShops error:");
   }
 };
 
@@ -56,8 +56,7 @@ export const verifyShop = async (req, res) => {
 
     res.status(200).json({ message: "Shop verified", shop });
   } catch (error) {
-    console.error("verifyShop error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "verifyShop error:");
   }
 };
 
@@ -85,8 +84,7 @@ export const suspendShop = async (req, res) => {
 
     res.status(200).json({ message: "Shop suspended", shop });
   } catch (error) {
-    console.error("suspendShop error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "suspendShop error:");
   }
 };
 
@@ -129,8 +127,7 @@ export const setShopSubscription = async (req, res) => {
       productLimit: settings.subscriptionTiers[tier].productLimit,
     });
   } catch (error) {
-    console.error("setShopSubscription error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "setShopSubscription error:");
   }
 };
 
@@ -147,8 +144,7 @@ export const featureShop = async (req, res) => {
 
     res.status(200).json({ message: "Shop updated", shop });
   } catch (error) {
-    console.error("featureShop error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "featureShop error:");
   }
 };
 
@@ -181,8 +177,7 @@ export const getUsers = async (req, res) => {
 
     res.status(200).json({ count: users.length, total, page, users });
   } catch (error) {
-    console.error("getUsers error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "getUsers error:");
   }
 };
 
@@ -219,8 +214,7 @@ export const updateUserRole = async (req, res) => {
       user: { _id: user._id, name: user.name, email: user.email, role: user.role },
     });
   } catch (error) {
-    console.error("updateUserRole error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "updateUserRole error:");
   }
 };
 
@@ -244,8 +238,7 @@ export const getAllOrders = async (req, res) => {
 
     res.status(200).json({ count: orders.length, total, page, orders });
   } catch (error) {
-    console.error("getAllOrders error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "getAllOrders error:");
   }
 };
 
@@ -305,8 +298,7 @@ export const getPlatformStats = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("getPlatformStats error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "getPlatformStats error:");
   }
 };
 
@@ -321,8 +313,7 @@ export const runExpirySweep = async (req, res) => {
     const result = await expireOrders();
     res.status(200).json({ message: "Expiry sweep complete", ...result });
   } catch (error) {
-    console.error("runExpirySweep error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "runExpirySweep error:");
   }
 };
 
@@ -339,7 +330,6 @@ export const queueShopNameSync = async (req, res) => {
         : "No queue connected - set REDIS_URL to enable background jobs",
     });
   } catch (error) {
-    console.error("queueShopNameSync error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "queueShopNameSync error:");
   }
 };

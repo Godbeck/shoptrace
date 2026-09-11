@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import Review from "../models/Review.js";
 import Order from "../models/Order.js";
 import Shop from "../models/Shop.js";
+import { sendError } from "../utils/apiError.js";
 
 /**
  * Recalculate a shop's rating summary from its reviews and store the result.
@@ -41,6 +42,15 @@ export const createReview = async (req, res) => {
         .json({ message: "Order, shop and rating are required" });
     }
 
+    // Checked here rather than left to the schema, so the message names the
+    // real range and the status is a 400 before any lookup happens.
+    const stars = Number(rating);
+    if (!Number.isInteger(stars) || stars < 1 || stars > 5) {
+      return res
+        .status(400)
+        .json({ message: "Rating must be a whole number from 1 to 5" });
+    }
+
     const order = await Order.findById(orderId);
     if (!order) {
       return res.status(404).json({ message: "Order not found" });
@@ -74,7 +84,7 @@ export const createReview = async (req, res) => {
       customerName: req.user.name,
       shop: shopId,
       order: orderId,
-      rating,
+      rating: stars,
       comment,
     });
 
@@ -88,8 +98,7 @@ export const createReview = async (req, res) => {
         .status(409)
         .json({ message: "You have already reviewed this shop for this order" });
     }
-    console.error("createReview error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "createReview error:");
   }
 };
 
@@ -111,8 +120,7 @@ export const getShopReviews = async (req, res) => {
 
     res.status(200).json({ count: reviews.length, total, page, reviews });
   } catch (error) {
-    console.error("getShopReviews error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "getShopReviews error:");
   }
 };
 
@@ -125,8 +133,7 @@ export const getMyReviews = async (req, res) => {
 
     res.status(200).json({ count: reviews.length, reviews });
   } catch (error) {
-    console.error("getMyReviews error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "getMyReviews error:");
   }
 };
 
@@ -161,8 +168,7 @@ export const replyToReview = async (req, res) => {
 
     res.status(200).json(review);
   } catch (error) {
-    console.error("replyToReview error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "replyToReview error:");
   }
 };
 
@@ -186,8 +192,7 @@ export const deleteReview = async (req, res) => {
 
     res.status(200).json({ message: "Review removed" });
   } catch (error) {
-    console.error("deleteReview error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "deleteReview error:");
   }
 };
 

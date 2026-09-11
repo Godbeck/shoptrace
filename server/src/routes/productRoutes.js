@@ -9,6 +9,7 @@ createProduct,
   getPriceHistory,
 } from '../controllers/productController.js';
 import {protect, authorize} from '../middleware/authMiddleware.js';
+import validateObjectId from '../middleware/validateObjectId.js';
 
 const router = express.Router();
 
@@ -16,9 +17,9 @@ const router = express.Router();
 router.get('/search', searchProducts);
 router.get('/my-products', protect, authorize('merchant'), getMyProducts);
 router.post('/', protect, authorize('merchant'), createProduct);
-router.get('/:id/price-history', getPriceHistory);
-router.get('/:id', getProductById);
-router.patch('/:id', protect, authorize('merchant'), updateProduct);
-router.delete('/:id', protect, authorize('merchant'), deleteProduct);
+router.get('/:id/price-history', validateObjectId(), getPriceHistory);
+router.get('/:id', validateObjectId(), getProductById);
+router.patch('/:id', protect, authorize('merchant'), validateObjectId(), updateProduct);
+router.delete('/:id', protect, authorize('merchant'), validateObjectId(), deleteProduct);
 
 export default router;

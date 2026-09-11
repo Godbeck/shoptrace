@@ -15,6 +15,7 @@ import {
   calculateDeliveryFee,
   getDistanceMeters,
 } from "../utils/deliveryCalculator.js";
+import { sendError } from "../utils/apiError.js";
 
 /**
  * Which status a sub-order is allowed to move to next. Written as data, not as
@@ -317,8 +318,7 @@ export const createOrder = async (req, res) => {
       return res.status(error.status).json({ message: error.message });
     }
 
-    console.error("createOrder error:", error);
-    res.status(500).json({ message: "Could not place your order" });
+    return sendError(res, error, "createOrder error:");
   }
 };
 
@@ -335,8 +335,7 @@ export const getMyOrders = async (req, res) => {
 
     res.status(200).json({ count: orders.length, page, orders });
   } catch (error) {
-    console.error("getMyOrders error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "getMyOrders error:");
   }
 };
 
@@ -377,8 +376,7 @@ export const getShopOrders = async (req, res) => {
       orders: orders.map((order) => shapeForShop(order, shop._id)),
     });
   } catch (error) {
-    console.error("getShopOrders error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "getShopOrders error:");
   }
 };
 
@@ -415,8 +413,7 @@ export const getOrderById = async (req, res) => {
 
     res.status(403).json({ message: "You cannot view this order" });
   } catch (error) {
-    console.error("getOrderById error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "getOrderById error:");
   }
 };
 
@@ -496,8 +493,7 @@ export const updateSubOrderStatus = async (req, res) => {
 
     res.status(200).json(shapeForShop(order, shop._id));
   } catch (error) {
-    console.error("updateSubOrderStatus error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "updateSubOrderStatus error:");
   }
 };
 
@@ -543,8 +539,7 @@ export const cancelOrder = async (req, res) => {
     // admin controller.
     res.status(200).json(order);
   } catch (error) {
-    console.error("cancelOrder error:", error);
-    res.status(500).json({ message: "Server error" });
+    return sendError(res, error, "cancelOrder error:");
   }
 };
 

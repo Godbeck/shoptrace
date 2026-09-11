@@ -1,5 +1,6 @@
 import User from '../models/User.js';
 import generateToken from '../utils/generateToken.js';
+import { sendError } from '../utils/apiError.js';
 
 export const registerUser = async (req, res) => {
     try{
@@ -40,8 +41,7 @@ export const registerUser = async (req, res) => {
         })
     }
     catch(error){
-        console.error('registerUser error:', error);
-        res.status(500).json({ message: 'Server error' });
+        return sendError(res, error, "registerUser error:");
     }
 }
 
@@ -75,7 +75,7 @@ export const loginUser = async (req, res) => {
         })
     }
     catch(error){
-        res.status(500).json({ message: 'Server error' });
+        return sendError(res, error, "loginUser error:");
     }
 }
 

@@ -97,6 +97,10 @@ The API runs on **port 4000**, not 5000.
 
 **Status codes are meaningful:** 201 created, 200 ok, 400 bad request, 401 identity unknown, 403 identity known but insufficient, 404 not found, 409 conflict (stock race), 500 server error.
 
+**Controller catch blocks call `sendError(res, error, "fnName error:")`**, never a bare `res.status(500)`. A bare 500 turns a Mongoose `ValidationError` into "Server error" and the app has nothing to show the user — this was a real bug across 42 catch blocks. `classifyError` in `utils/apiError.js` is the single source of truth, shared with `errorMiddleware`.
+
+**Routes with an id parameter chain `validateObjectId()`** before the controller. Because every controller catches its own errors, a `CastError` never reaches the error middleware — it came back as a 500 leaking `Cast to ObjectId failed for value ... for model Product`.
+
 ---
 
 ## Patterns that must be followed
@@ -196,27 +200,33 @@ Full spec is in the design specification document. The essentials:
 
 ---
 
+## Testing
+
+`server/postman/` holds a collection of 172 requests and 255 assertions covering every route, with real test data filled in and tokens captured automatically. Run the folders in order — the order is a dependency chain. See `server/postman/README.md`.
+
+Verified with `npx newman run` — 172/172 requests, 255/255 assertions, twice in a row.
+
 ## Current state
 
-The server is feature-complete and exercised against Atlas. See `BUILD_LOG.md` session 16 for what was proved and how.
+The server is feature-complete and covered by the Postman collection. See `BUILD_LOG.md` sessions 16 and 17.
 
-**Working and tested:** auth with role escalation closed, shops and geospatial search, product CRUD and search and price history, subscription limits, settings API, admin API, checkout with atomic reservation and proven rollback, order state machine, merchant privacy boundary, expiry sweep, Paystack webhook with signature verification and idempotency, reviews gated on completion, price alerts, all five job handlers run directly.
+**Working and tested:** auth with role escalation closed, shops and geospatial search, product CRUD and search and price history, subscription limits, settings API, admin API, checkout with proven rollback, order state machine, merchant privacy boundary, expiry sweep, Paystack webhook with signature verification and idempotency, reviews gated on completion, price alerts, all five job handlers, and 400-with-a-real-message on validation and cast errors.
 
 **Written but never actually run:**
 
-- BullMQ queue round-trip, retries and cron schedules — no `REDIS_URL` yet, so `npm run worker` has never connected
-- Cloudinary uploads — no credentials; the routes return 503 without them
-- Paystack `initiatePayment` and `refundOrder` against the live sandbox — only the webhook and local signature logic are proven
+- BullMQ queue round-trip, retries and cron schedules — no `REDIS_URL` yet
+- Cloudinary uploads — no credentials; the routes return 503
+- Paystack `initiatePayment` / `verifyPayment` / `refundOrder` against the live sandbox
 
-**Not started:** mobile app, admin dashboard, `packages/shared`, an automated test suite, push notifications, email.
+**Not started:** mobile app, admin dashboard, `packages/shared`, push notifications, email.
 
 **Immediate next steps:**
 
-1. Upstash Redis, set `REDIS_URL`, confirm the worker connects and the minute-by-minute sweep fires
+1. Upstash Redis, confirm the worker connects and the sweep fires
 2. Cloudinary credentials, upload one real image
 3. Real Paystack test key, one sandbox MoMo payment with the webhook on a tunnel
-4. Clear the end-to-end test data out of Atlas
-5. Convert the curl scripts into supertest before the mobile app starts changing the API
+4. Clear the accumulated test data out of Atlas
+5. Start the mobile app
 
 ## Known simplifications
 

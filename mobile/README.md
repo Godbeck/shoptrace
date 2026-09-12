@@ -6,16 +6,7 @@ Every screen in `server/design.md` that belongs on a phone is built. Screens
 
 **Connected to the API.** There is no mock data anywhere — every screen reads and writes the real server.
 
-## Running it
-
-```bash
-cd mobile
-npm install
-npm start
-```
-
-Then press `i` for the iOS simulator, `a` for Android, or scan the QR code with
-Expo Go on your phone.
+See the [root README](../README.md) for how to run the app and the API.
 
 ## Where things are
 
@@ -89,6 +80,11 @@ items and Profile is one of them.
 There is no second account to register. Open **Profile → Switch to merchant**,
 or **Shop settings → Switch to customer view** to come back.
 
+The surface is a UI mode — `role` never changes, and the same account buys and
+sells. The one refusal is buying from your own shop: the offer shows
+**Edit listing** instead of Add to cart, and checkout returns 403 if you get
+past it.
+
 ## The OTP, and why it is on screen
 
 No SMS provider is connected. So `requestOtp` in `src/lib/session.tsx`
@@ -100,16 +96,6 @@ Try it: **Login → Phone**, or register a new account.
 When a real provider is wired up, two things change — `requestOtp` calls the
 server, and the banner stops carrying the code. The OTP screen itself does not
 change at all.
-
-## Connecting the server later
-
-`src/mocks/data.ts` is deliberately shaped like the API's real responses:
-`shopName`, `stockCount`, `imageUrls`, `subOrders`, `deliveryRange` and so on
-all match the Mongoose models. Swapping a mock for a `fetch` should be a change
-of source, not a change of shape.
-
-Screens never reach for mock data through a global — they import it directly,
-so the places to change are easy to find with a single grep for `@/mocks/data`.
 
 ## What is deliberately stubbed
 

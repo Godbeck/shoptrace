@@ -41,6 +41,7 @@ import { api, type ApiProduct } from "@/lib/api";
 import { useAsync, useCoords } from "@/lib/useApi";
 import { useSession } from "@/lib/session";
 import { useCart } from "@/lib/cart";
+import { useShop } from "@/lib/shop";
 import {
   reliabilityLabel,
   stockLabel,
@@ -92,6 +93,10 @@ export default function ProductDetail() {
   const { latitude, longitude } = useCoords();
   const { signedIn, notify, notifyError } = useSession();
   const { add } = useCart();
+  // A merchant browsing as a customer is the same account. They may buy from
+  // anyone except themselves, so their own shop's offer gets an edit button
+  // where the add button would be, rather than a rejection at checkout.
+  const { shop: myShop } = useShop();
 
   const [target, setTarget] = useState("");
   const [savingAlert, setSavingAlert] = useState(false);
@@ -161,6 +166,10 @@ export default function ProductDetail() {
   const spread = offers.length > 1 && highest > lowest;
 
   const addOffer = (offer: Offer) => {
+    if (myShop && offer.shop._id === myShop._id) {
+      notify({ title: "This is your own listing" });
+      return;
+    }
     if (!offer.inStock) {
       notify({ title: "That shop is out of stock" });
       return;
@@ -369,20 +378,33 @@ export default function ProductDetail() {
                       style={{ flex: 1 }}
                       onPress={() => router.push(`/shop/${offer.shop._id}`)}
                     />
-                    <Button
-                      label={
-                        addingFrom === offer._id
-                          ? "Added"
-                          : note
-                            ? "Add anyway"
-                            : "Add to cart"
-                      }
-                      small
-                      icon="bag-add-outline"
-                      style={{ flex: 1 }}
-                      disabled={!offer.inStock}
-                      onPress={() => addOffer(offer)}
-                    />
+                    {myShop && offer.shop._id === myShop._id ? (
+                      <Button
+                        label="Edit listing"
+                        variant="outline"
+                        small
+                        icon="create-outline"
+                        style={{ flex: 1 }}
+                        onPress={() =>
+                          router.push(`/product-form?id=${offer._id}`)
+                        }
+                      />
+                    ) : (
+                      <Button
+                        label={
+                          addingFrom === offer._id
+                            ? "Added"
+                            : note
+                              ? "Add anyway"
+                              : "Add to cart"
+                        }
+                        small
+                        icon="bag-add-outline"
+                        style={{ flex: 1 }}
+                        disabled={!offer.inStock}
+                        onPress={() => addOffer(offer)}
+                      />
+                    )}
                   </View>
                 </View>
               );

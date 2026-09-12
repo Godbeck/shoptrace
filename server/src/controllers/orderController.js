@@ -152,10 +152,30 @@ export const createOrder = async (req, res) => {
     const shopsById = new Map(shops.map((shop) => [shop._id.toString(), shop]));
 
     for (const product of products) {
-      if (!shopsById.has(product.shop.toString())) {
+      const shop = shopsById.get(product.shop.toString());
+
+      if (!shop) {
         throw new CheckoutError(
           409,
           `${product.name} is sold by a shop that is not currently active`,
+        );
+      }
+
+      // A merchant browsing the customer surface is still the same account, and
+      // that is deliberate - the owner of a hardware shop still buys shirts.
+      // Buying from THEMSELVES is the case that has to be closed, and not for
+      // tidiness: fulfilmentRate is fulfilled / (fulfilled + declined) and is
+      // hidden below three outcomes, so three orders placed with yourself,
+      // accepted and completed, publish a 100% fulfilment rate to real
+      // customers. That is the one number a stranger uses to judge a shop.
+      //
+      // Checked here rather than in the app because the app is not the only
+      // client, and before any stock is reserved, so there is nothing to roll
+      // back.
+      if (shop.owner.toString() === req.user._id.toString()) {
+        throw new CheckoutError(
+          403,
+          `${product.name} is sold by your own shop - you cannot order from yourself`,
         );
       }
     }

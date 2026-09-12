@@ -25,8 +25,13 @@ import { sendError } from "../utils/apiError.js";
  */
 const ALLOWED_TRANSITIONS = {
   pending: ["accepted", "declined"],
-  accepted: ["packed", "cancelled"],
-  packed: ["out_for_delivery", "ready_for_pickup", "cancelled"],
+  // "declined" is reachable from accepted and packed on purpose. Orders are
+  // accepted automatically on payment now, so the merchant's escape hatch has
+  // to live AFTER acceptance - that is the "can't fulfil" path, and it is the
+  // honest answer to stock that went stale because the shop sold the last one
+  // over the counter.
+  accepted: ["packed", "declined", "cancelled"],
+  packed: ["out_for_delivery", "ready_for_pickup", "declined", "cancelled"],
   out_for_delivery: ["completed"],
   ready_for_pickup: ["completed"],
   completed: [],
@@ -483,6 +488,38 @@ export const updateSubOrderStatus = async (req, res) => {
       }
       // The customer is not getting these items, so the stock goes back.
       await releaseStock(reservationsFromItems(subOrder.items));
+
+      // A merchant declining BECAUSE it is out of stock is telling us the
+      // recorded stock is wrong - almost always because they sold it in the
+      // shop and did not update here. Take them at their word and zero it,
+      // so the next customer is not sold the same phantom unit.
+      if (status === "declined" && req.body.outOfStock) {
+        await Promise.all(
+          subOrder.items.map((item) =>
+            Product.updateOne(
+              { _id: item.product },
+              {
+                $set: {
+                  stockCount: 0,
+                  inStock: false,
+                  // They just told us the truth, so the figure is freshly
+                  // confirmed even though the news is bad.
+                  stockConfirmedAt: new Date(),
+                },
+              },
+            ),
+          ),
+        );
+      }
+    }
+
+    // Track whether this shop actually delivers what it lists. $inc rather
+    // than read-modify-write, for the same reason viewCount uses it.
+    if (status === "declined") {
+      await Shop.updateOne({ _id: shop._id }, { $inc: { declinedCount: 1 } });
+    }
+    if (status === "completed") {
+      await Shop.updateOne({ _id: shop._id }, { $inc: { fulfilledCount: 1 } });
     }
 
     subOrder.status = status;

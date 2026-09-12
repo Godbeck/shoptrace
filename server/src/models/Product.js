@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import PriceHistory from "./PriceHistory.js";
+import { CATEGORIES } from "../utils/categories.js";
 import { enqueueQuietly, JOBS } from "../jobs/queue.js";
 
 const productSchema = new mongoose.Schema(
@@ -36,7 +37,7 @@ const productSchema = new mongoose.Schema(
         category: {
             type: String,
             required: [true, 'Category is required'],
-            enum: ['Electronics', 'Fashion', 'Food', 'Home', 'Hardware', 'Other'],
+            enum: CATEGORIES,
         },
         description: {
             type: String,
@@ -51,6 +52,20 @@ const productSchema = new mongoose.Schema(
             type: Number,
             default: 0,
             min: [0, 'Stock count cannot be negative'],
+        },
+        /**
+         * When the MERCHANT last vouched for this number - not when the
+         * system last changed it.
+         *
+         * That distinction is the whole point. A platform sale decrements
+         * stock accurately, so it proves nothing about whether the merchant
+         * also sold three over the counter this morning. Only a human saying
+         * "yes, this is right" refreshes confidence, so only that updates
+         * this field.
+         */
+        stockConfirmedAt: {
+            type: Date,
+            default: Date.now,
         },
         inStock: {
             type: Boolean,

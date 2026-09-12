@@ -42,19 +42,43 @@ const findOrderByReference = async (reference, metadata = {}) => {
  * Checking with a read first and then writing would let both through.
  */
 const markOrderPaid = async (order, { reference, channel }) => {
+  const now = new Date();
+
   const updated = await Order.findOneAndUpdate(
     { _id: order._id, paymentStatus: { $ne: "paid" } },
     {
       $set: {
         paymentStatus: "paid",
-        paidAt: new Date(),
+        paidAt: now,
         paystackReference: reference,
         ...(channel ? { paymentMethod: mapChannel(channel) } : {}),
+        // AUTO-ACCEPT. A paid order goes straight to accepted rather than
+        // waiting for the merchant to tap something.
+        //
+        // Why: a busy shop can take dozens of orders a day, and making every
+        // one wait on a tap turns the merchant into a bottleneck the customer
+        // feels. The acceptance step was really a stock check in disguise -
+        // and a stock check is better handled by letting the merchant say
+        // "can't fulfil" on the rare failure than by making them confirm
+        // every success.
+        "subOrders.$[waiting].status": "accepted",
+      },
+      $push: {
+        "subOrders.$[waiting].statusHistory": {
+          status: "accepted",
+          at: now,
+          note: "Confirmed automatically on payment",
+        },
       },
       // Cleared so the expiry sweep can never cancel a paid order.
       $unset: { expiresAt: "" },
     },
-    { new: true },
+    {
+      new: true,
+      // Only sub-orders still sitting at pending. A shop that already
+      // declined before payment landed is left alone.
+      arrayFilters: [{ "waiting.status": "pending" }],
+    },
   );
 
   // null means it was already paid - a duplicate delivery, not a problem.
@@ -297,5 +321,68 @@ export const refundOrder = async (req, res) => {
   } catch (error) {
     console.error("refundOrder error:", error);
     res.status(502).json({ message: "Could not process the refund" });
+  }
+};
+
+/**
+ * POST /api/payments/mock-pay/:orderId
+ *
+ * Marks an order paid WITHOUT Paystack, so the whole order lifecycle can be
+ * walked before a payment provider exists: check out, merchant accepts, status
+ * advances, customer watches it happen.
+ *
+ * Three things make this safe to keep in the codebase:
+ *
+ *  1. It refuses to run unless ALLOW_MOCK_PAYMENTS is explicitly "true".
+ *  2. It refuses to run when NODE_ENV is production, flag or no flag.
+ *  3. It goes through the SAME markOrderPaid helper the real webhook uses, so
+ *     testing with it exercises the real idempotency path rather than a
+ *     parallel one that might drift.
+ *
+ * Delete this handler and its route the day Paystack goes live.
+ */
+export const mockPayOrder = async (req, res) => {
+  try {
+    if (process.env.NODE_ENV === "production") {
+      return res.status(403).json({ message: "Not available" });
+    }
+    if (process.env.ALLOW_MOCK_PAYMENTS !== "true") {
+      return res.status(403).json({
+        message:
+          "Mock payments are off. Set ALLOW_MOCK_PAYMENTS=true in the server .env while Paystack is not connected.",
+      });
+    }
+
+    const order = await Order.findById(req.params.orderId);
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+    if (order.customer.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: "This is not your order" });
+    }
+    if (order.paymentStatus === "paid") {
+      return res
+        .status(409)
+        .json({ message: "This order has already been paid for" });
+    }
+    if (order.expiresAt && order.expiresAt <= new Date()) {
+      return res
+        .status(409)
+        .json({ message: "This order has expired - please check out again" });
+    }
+
+    const updated = await markOrderPaid(order, {
+      // Prefixed so a mock payment is obvious in the database and can never
+      // be mistaken for a real Paystack reference.
+      reference: `MOCK-${order.orderNumber}`,
+      channel: req.body?.channel === "card" ? "card" : "mobile_money",
+    });
+
+    console.log(`MOCK PAYMENT recorded for ${order.orderNumber}`);
+
+    res.status(200).json({ paid: true, mock: true, order: updated || order });
+  } catch (error) {
+    return sendError(res, error, "mockPayOrder error:");
   }
 };

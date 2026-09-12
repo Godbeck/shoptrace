@@ -16,7 +16,7 @@ export const getShops = async (req, res) => {
 
     const filter = {};
     if (status) filter.status = status;
-    if (category) filter.category = category;
+    if (category) filter.categories = category;
     if (search) filter.name = { $regex: search, $options: "i" };
 
     const [shops, total] = await Promise.all([

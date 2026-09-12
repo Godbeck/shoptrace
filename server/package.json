@@ -9,7 +9,10 @@
     "start": "node src/app.js",
     "worker": "node src/jobs/worker.js",
     "worker:dev": "nodemon src/jobs/worker.js",
-    "seed:admin": "node src/scripts/createAdmin.js"
+    "seed:admin": "node src/scripts/createAdmin.js",
+    "db:reset": "node src/scripts/resetDatabase.js",
+    "seed:merchants": "node src/scripts/seedMerchants.js",
+    "db:migrate-categories": "node src/scripts/migrateCategories.js"
   },
   "keywords": [],
   "author": "",

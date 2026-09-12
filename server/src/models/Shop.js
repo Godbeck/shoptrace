@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { CATEGORIES } from "../utils/categories.js";
 
 const shopSchema = new mongoose.Schema(
   {
@@ -12,10 +13,25 @@ const shopSchema = new mongoose.Schema(
       required: [true, "Shop name is required"],
       trim: true,
     },
-    category: {
-      type: String,
-      required: [true, "Category is required"],
-      enum: ["Electronics", "Fashion", "Food", "Home", "Hardware", "Other"],
+    /**
+     * A shop can sell across several categories - a hardware shop that also
+     * stocks fans is normal, and forcing it to pick one made it invisible in
+     * half the searches it belonged in.
+     *
+     * Products still carry exactly ONE category each. This is about the shop,
+     * not the item.
+     */
+    categories: {
+      type: [String],
+      required: [true, "Pick at least one category"],
+      enum: {
+        values: CATEGORIES,
+        message: "{VALUE} is not a category ShopTrace supports",
+      },
+      validate: {
+        validator: (list) => Array.isArray(list) && list.length > 0,
+        message: "Pick at least one category",
+      },
     },
     description: {
       type: String,
@@ -73,6 +89,20 @@ const shopSchema = new mongoose.Schema(
       enum: ["none", "area", "city", "nationwide"],
       default: "none",
     },
+    /**
+     * Fulfilment history, used to decide how much to trust this shop's stock.
+     *
+     * Counters rather than an aggregation, because a search page showing 50
+     * products would otherwise need 50 aggregations to render a badge.
+     */
+    fulfilledCount: {
+      type: Number,
+      default: 0,
+    },
+    declinedCount: {
+      type: Number,
+      default: 0,
+    },
     averageRating: {
       type: Number,
       default: 0,
@@ -100,7 +130,9 @@ const shopSchema = new mongoose.Schema(
 );
 
 shopSchema.index({ location: "2dsphere" });
-shopSchema.index({ status: 1, category: 1 });
+// Multikey index - MongoDB indexes each entry of the array, so a query for
+// one category still hits it.
+shopSchema.index({ status: 1, categories: 1 });
 shopSchema.index({ averageRating: -1 });
 
 const Shop = mongoose.model("Shop", shopSchema);

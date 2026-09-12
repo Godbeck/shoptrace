@@ -394,43 +394,197 @@ Fixed with `middleware/validateObjectId.js`, applied to all 19 routes carrying a
 
 ---
 
+## Session 18 — Mobile app, all 16 screens
+
+Built the Expo app end to end against `server/design.md`. No server calls yet — this is the design phase, and everything renders from mock data.
+
+**Scope.** The spec lists 20 screens; 16 belong on a phone. Screens 17-20 are the admin web dashboard and were left out. Two screens were added that are not in the numbered inventory: an **OTP** screen, because there is no SMS provider yet, and a **Profile** screen, because the customer bottom nav has five items and Profile is one of them. 18 screens in total, across 23 route files.
+
+**Stack.** Expo SDK 57, React Native 0.86, React 19.2, TypeScript, and **Expo Router** for file-based navigation — the folder tree under `src/app/` is the navigation graph, so there is no route config to keep in sync.
+
+Routes live in `src/app`, not `app/` at the project root. Expo's CLI checks for `src/app` first and uses it automatically when present, so this needs no configuration, and it keeps the project root from carrying two source folders side by side.
+
+**Built: `src/theme/index.ts`.** Every colour, type size, radius and spacing value from the spec, in one file. No screen writes a hex value. Two details worth noting: `borderWidth.hairline` uses `StyleSheet.hairlineWidth` rather than a literal `0.5`, because on Android 0.5 can round to zero and the border vanishes entirely; and `NO_SHADOW` is exported as a named constant so the no-shadows rule is visible in the code rather than merely absent from it.
+
+**Built: `src/lib/format.ts`.** The section 21 copy rules. `cedis()` only shows decimals when the amount actually has pesewas, so a price of 890 reads `GH₵ 890` and not `GH₵ 890.00`. `distance()` never renders metres. `deliveryEstimate()` only ever returns a range.
+
+**Built: the component layer** — `ui.tsx` (button, chip, field, toggle, pills, empty state), `cards.tsx` (product card, shop card, the `from GH₵ 890` treatment, the price-drop treatment), `headers.tsx` (the two-surface rule).
+
+The `from` label at 10px in text-tertiary is the single most important detail in the card: it is what tells a customer that several prices exist and a comparison is available, which is the entire product.
+
+**The two-surface rule is enforced by component choice.** `CreamHeader` for customer screens, `InkHeader` for merchant screens. Chips needed an `onSurface` prop because the merchant filter chips sit directly on ink, where a white outline chip would be invisible.
+
+**Built: `src/lib/session.tsx`** — auth state, role, and the in-app notification queue.
+
+**The OTP is delivered as an in-app notification**, because no SMS provider exists. `requestOtp` generates a six-digit code, stores it, and pushes it through a banner that slides down over whatever screen is showing. The banner is an ink card, so it reads as system chrome rather than page content.
+
+When a provider is connected, only two things change: `requestOtp` calls the server, and the banner stops carrying the code. The OTP screen itself does not change.
+
+**Built: `src/mocks/data.ts`**, shaped to match the API's real responses — `shopName`, `stockCount`, `imageUrls`, `subOrders`, `deliveryRange`. Swapping a mock for a `fetch` should be a change of source, not a change of shape. Data is real for Accra: MallTech Osu, Circle Electronics, Madina Provisions, Tema Hardware Hub, Adum Traders in Kumasi; an Infinix Hot 40i at GH₵ 1,450.50, Ghacem cement, a Binatone fan.
+
+Crucially, `merchantOrders` is shaped as the merchant actually receives it — no `subOrders` array, no `grandTotal` — mirroring the privacy boundary the server enforces. The mock cannot leak another shop's items because the data simply is not there.
+
+**Screens where the spec's reasoning drove the implementation:**
+
+- **Search** groups results under "Near you" and "Elsewhere in Accra", with anything past the city band collapsed behind one line reading "N more shops nationwide from GH₵ X". Hiding a large saving would defeat the app.
+- **Product detail** deliberately ignores that tier grouping and lists every shop sorted by price, because comparison is the page's whole purpose.
+- **Shop profile** gives Call and WhatsApp the same visual weight as Order.
+- **Checkout** groups line items by shop, each group with its own delivery line, because delivery is priced per shop on the server. Mobile Money is first and selected by default.
+- **Order tracking** draws one timeline per shop, since sub-orders progress independently.
+- **Price alerts** uses a progress bar between the price when the alert was set and the target, with "GH₵ 300 away" beside it.
+- **Merchant orders** only offers status transitions the server's state machine would actually accept, so a merchant cannot tap a button and get a 400 back.
+- **Shop settings** offers exactly three named delivery ranges and no fee field anywhere.
+- **Add product** puts image upload above every text field.
+
+**Surface switching.** There is no second account to register during the design phase, so Profile carries a "Switch to merchant" action and Shop settings carries the reverse. It also makes the two-surface rule easy to see back to back.
+
+**Problems hit during setup:**
+
+- `@expo/vector-icons` is no longer bundled with Expo in SDK 57 and had to be installed explicitly.
+- Installing it failed on a peer conflict: `react-dom@19.3.0` had been hoisted while React is pinned at 19.2.3. Fixed by pinning `react-dom` to match rather than forcing the install with `--legacy-peer-deps`, which would have left a genuinely mismatched tree.
+- The blank template ships no `babel.config.js`, so adding one referencing `babel-preset-expo` broke the bundler — that package is not a direct dependency by default. Installing it fixed the build. The config is needed anyway for `react-native-worklets/plugin`, which Reanimated 4 requires.
+
+**Verified.** `npx tsc --noEmit` passes clean across all 23 route files and the component layer. `npx expo export --platform ios` completes with exit 0, producing a 4.1MB Hermes bundle with no warnings and all 23 routes registered.
+
+**Not verified.** The app has never been opened on a simulator or a device in this session, so nothing has been seen rendering. Bundling proves every import resolves and the types line up; it does not prove a layout looks right.
+
+---
+
+## Session 19 — The app talks to the server
+
+Wired the mobile app to the real API, and added the three server pieces that were missing for a full end-to-end run: saved addresses, saved payment methods, and a way to pay without Paystack.
+
+**Server: `POST /api/payments/mock-pay/:orderId`.** Marks an order paid with no payment provider involved, so the whole lifecycle can be walked today. Three things keep it safe: it refuses unless `ALLOW_MOCK_PAYMENTS=true`, it refuses outright when `NODE_ENV=production`, and it goes through the **same `markOrderPaid` helper the real webhook uses** — so testing with it exercises the real idempotency path rather than a parallel one that could drift. The reference it writes is prefixed `MOCK-`, so a fake payment can never be mistaken for a Paystack one in the database.
+
+**Server: saved addresses and payment methods** on the User model, with CRUD under `/api/auth/me/addresses` and `/api/auth/me/payment-methods`, plus `PATCH /api/auth/me` for name and phone. None of these paths take a `:userId` — a user can only ever edit themselves.
+
+Addresses store GeoJSON `[longitude, latitude]`, the same shape Shop uses, so checkout hands the coordinates straight to the delivery calculator with no conversion.
+
+**Payment methods are Mobile Money only, and that is a decision rather than an omission.** A MoMo number is not a secret the way a card number is — it is the same number a customer reads out to a merchant on the phone. Storing a card number would put the project in PCI scope; the correct approach keeps a Paystack authorization token instead of the card, which needs Paystack. So the option does not exist rather than existing in an unsafe form.
+
+**Mobile: `src/lib/api.ts`.** One client. It works out the base URL rather than hardcoding it, because that is the most common thing to get wrong in Expo: the iOS simulator reaches the Mac on `localhost`, the Android emulator needs `10.0.2.2`, and a real phone needs the Mac's LAN IP — which Expo already knows, because that is how it served the bundle. It reads that back off the dev-server host. `EXPO_PUBLIC_API_URL` overrides everything.
+
+It also surfaces the server's own error messages. The API was built to return usable ones — "Password must be at least 6 characters long" — and throwing them away for a generic string would waste that work.
+
+**Mobile: `src/lib/cart.tsx`.** The cart did not exist before. It lives entirely on the device, because the server has no cart concept — an order is created in one shot with stock reserved atomically at that moment. So the cart is a local intention, not a reservation: an item can sell out between adding it and paying, and the server answers with a 409 naming the item. Built that way deliberately rather than faking a hold.
+
+**Mobile: session rewritten.** Real register and login, JWT persisted to AsyncStorage so a reload does not sign you out, and the token handed to the api client on every change.
+
+The OTP stays local. The server's auth is email plus password and there is no SMS provider, so the code is generated on the device and shown in the notification banner. It gates the phone-signup flow in the UI without pretending the server verified anything.
+
+**Mobile: `useAsync` with refetch-on-focus.** This is what makes the merchant-to-customer loop visible: a customer watching an order sees the merchant's status changes simply by coming back to the screen. Real-time push is the upgrade.
+
+**Screens now on the real API:** login, register, home, product detail, cart, checkout, order tracking, my orders, price alerts, profile, delivery addresses, payment methods, merchant orders.
+
+**Still on mock data:** search, shop profile, merchant home, listings, analytics, shop settings, add/edit product.
+
+**Verified end to end against Atlas — 34 assertions, all passing.** Register, save an address with correct `[lng, lat]` order, save a MoMo number, refuse a duplicate, refuse a card provider, list a product, find it in search, set a price alert, refuse a target above the current price, check out with stock going 10 to 8, confirm the merchant cannot see an unpaid order, pay without Paystack, refuse a second payment, confirm the merchant queue exposes one sub-order and no basket total, walk all four status changes with the customer seeing each one, refuse an illegal transition, and watch a price drop beat an alert target.
+
+`npx tsc --noEmit` is clean and `expo export --platform ios` completes with exit 0.
+
+**An environment note worth recording.** Partway through this session every DNS lookup from the shell began timing out, including to 8.8.8.8, which broke `mongodb+srv://` — it needs both an SRV and a TXT record. Since `connectDB` calls `process.exit(1)` on failure, the server died on boot rather than degrading. It cleared on its own. If it recurs, Atlas's non-SRV connection string avoids both lookups.
+
+---
+
+## Session 20 — Mocks deleted, merchant onboarding gate
+
+Every screen now reads and writes the real server. `src/mocks/` is gone.
+
+**Server: `GET /api/merchant/summary?days=N`.** Revenue, orders, views, a per-day series, top products and a funnel, all computed from real paid orders with an aggregation. The `$unwind` then `$match` on the merchant's own shop is what makes a multi-shop order contribute only its own slice.
+
+Two deliberate choices in that endpoint. **Revenue counts completed sub-orders only**, with everything still in flight reported separately as `pipelineValue` — an accepted order is not money yet. And **the funnel is three steps, not five**: clicks and add-to-cart are not tracked anywhere, so inventing them would make the chart lie. It returns product views, orders, completed.
+
+**Mobile: the merchant onboarding gate.** A merchant account on its own is not enough to sell. `src/lib/shop.tsx` loads the merchant's shop and resolves one of four states — none, pending, verified, suspended — and the merchant tab layout redirects anything but verified to `/merchant/setup`.
+
+That screen is the shop registration form when there is no shop, and a waiting screen when the shop is pending, explaining exactly what is blocked and why. It also prints the admin call needed to verify it, since there is no admin app yet.
+
+This mirrors the server rather than inventing a rule: `createProduct` returns 403 until the shop is verified, and `getNearbyShops` filters on status so a pending shop is invisible to customers. The gate just means a merchant learns that on a screen that explains it, instead of from a 403 after filling in a whole product form.
+
+**Screens moved off mocks:** merchant home, listings, add/edit product, analytics, shop settings, customer search, shop profile. Plus the new setup screen.
+
+**`src/lib/viewModels.ts`** replaces the types the cards used to borrow from the mock file. The cards render a view model rather than an API type, because a product card needs "from GH 890" and "4 shops nearby" — properties of a comparison, not of one product row. `adapt.ts` is the only place that builds them, and it documents the honest gap: the search endpoint returns one row per product per shop, so `shopCount` is 1 until there is an endpoint that groups by product.
+
+**Verified end to end — 26 assertions, all passing.** Register a merchant, confirm no shop gives a 404 and a product is refused, register the shop, confirm it starts pending, confirm a pending shop cannot list products and is hidden from customer search, verify it as admin, confirm it becomes visible, list a product, edit the price and confirm price history was written, load the summary with a real product count and plan limit, place and pay an order as a customer, confirm revenue waits for completion while pipeline value shows it, then complete it and confirm revenue lands, top products populate, and the funnel carries only tracked steps.
+
+`tsc --noEmit` clean, `expo export --platform ios` exit 0.
+
+---
+
+## Session 21 — Compare prices, auto-accept, and making stock trustworthy
+
+**Compare prices across shops is back**, and it needed a new endpoint. Each shop creates its own Product document, so "Infinix Hot 40i" at three shops was three unrelated rows with nothing linking them. `GET /api/products/:id/compare` matches on a normalised name and returns every verified shop selling it, cheapest first, each with its own price, stock, distance and reliability.
+
+Honest compromise, documented in the controller: name matching works when merchants type the same thing and fails when they do not. The real fix is a catalogue that shops attach offers to, which is a migration rather than an endpoint. Worth doing before launch.
+
+**Orders now accept themselves on payment.** `markOrderPaid` flips every pending sub-order to `accepted` in the same atomic write. The acceptance step was really a stock check in disguise, and making a merchant confirm every success to catch the rare failure is the wrong trade when a shop takes dozens of orders a day.
+
+So the escape hatch moved to where it belongs: `declined` is now reachable from `accepted` and `packed`, surfaced as one button - **Can't fulfil**. It refunds, returns the stock, and takes the merchant at their word by zeroing the count.
+
+### The stale stock problem, and what was built for it
+
+The problem Godbeck raised: a merchant lists 5, sells 2 over the counter, forgets to update here, and customers keep seeing 5.
+
+The framing that unlocked it: **a stock figure is not a fact, it is a claim with an age.** It is rarely wrong because it is a number; it is wrong because it is old.
+
+**`Product.stockConfirmedAt` records when the MERCHANT last vouched for the count** - deliberately not when the system last changed it. A platform sale decrements stock accurately and therefore proves nothing about counter sales, so automatic decrements do not refresh it. Only creating a product, editing its stock, or confirming it does. That distinction is the whole mechanism and it is tested.
+
+**Confidence decays and the wording follows it.** Under a day: "5 in stock". Within a week: "About 5 left". Beyond that the number disappears entirely and the app says "Check availability" - because repeating a three-week-old figure reads as a promise the platform cannot keep.
+
+**`Shop.fulfilledCount` and `declinedCount`** move on real outcomes, incremented with `$inc` for the same reason `viewCount` is. `fulfilmentRate` returns **null** below three outcomes rather than 100%: a new shop has not earned a perfect score, it simply has no score, and the interface says so.
+
+**A shop with a poor record gets flagged even when its stock is fresh.** `needsConfirmation` is true when the claim is stale OR the shop fulfils under 70%, and the product screen then shows a plain sentence explaining which, with the button reading "Add anyway" instead of "Add to cart".
+
+**`PATCH /api/products/:id/confirm-stock`** is the cheap half of the fix, and `/stock-check` is the screen around it: every product not vouched for in a week, each with minus / plus / "Still right", plus a confirm-all. The expensive half - failing an order and refunding someone - is a terrible way to discover a count was wrong.
+
+**Verified.** 13 unit assertions on the confidence and reliability logic, and 22 API assertions covering: creation stamps confirmation, a sale does not refresh it, a price edit does not but a stock edit does, one-tap confirm with and without a new count, negatives refused, another merchant refused, no rate until there is history then 50% from 2 kept and 2 declined, compare carrying confidence and rate, a fresh-stock listing still flagged because the shop is unreliable, and an out-of-stock decline both zeroing and re-vouching.
+
+### Also in this pass
+
+Cart moved into the product-detail header. Profile left the tab bar, since it is reachable from the header avatar. The bell now opens a real **Notifications** screen assembled from order status history and beaten price alerts - useful before a notifications API exists, and shaped so it can swap source later. Tab bars sit higher off the bottom edge, and the body gutter went 14 to 18 because cards read as tight to the edge on a real phone.
+
+Sixteen pieces of developer-facing copy were replaced with customer-facing wording - Paystack, Cloudinary, `.env` and the admin verify call are no longer mentioned anywhere a user can read.
+
+**One bug worth recording.** `/merchant/setup` lived inside the merchant tabs folder, and the tab layout returned `<Redirect>` instead of `<Tabs>` when the shop was not verified. A layout that renders no navigator has nothing for its children to mount into, so the route it redirected to could not render and it looped. Moving setup to `/merchant-setup`, a sibling rather than a child, fixed the crash and removed the tab bar from the waiting screen at the same time.
+
+---
+
 ## Current state
 
-**Working and tested — 172 Postman requests, 255 assertions, all passing:**
+**Server — working and tested** (172 Postman requests, 255 assertions, all passing):
 
-- Express API on port 4000, MongoDB Atlas, error middleware, health endpoint
-- Register, login, JWT, `protect` and `authorize`; role escalation closed
-- Shop registration, geospatial search proven at 5km vs 300km, shop editing
-- Product CRUD, aggregation search, price history hooks, subscription limits
-- Settings API — public read, admin read, admin patch with a nested allowlist
-- Admin API — approval, suspension, subscriptions, roles, stats
-- Checkout — atomic reservation, proven rollback, multi-shop sub-orders, pickup fallback
-- Order state machine, delivery/pickup guards, status history, cancellation
-- Merchant privacy boundary on multi-shop orders
-- Order expiry sweep via the admin endpoint, with no double-release
-- Paystack — signed webhook, idempotency, underpayment rejection
-- Reviews gated on a completed sub-order, with rating recalculation
-- Price alerts, and all five job handlers run directly
-- Validation and cast errors now return 400 with usable messages
+- Auth with role escalation closed, shops and geospatial search, product CRUD and search, price history, subscription limits
+- Settings API, admin API, checkout with proven rollback, order state machine, merchant privacy boundary, expiry sweep
+- Paystack signed webhook with idempotency and underpayment rejection
+- Reviews gated on a completed sub-order, price alerts, all five job handlers
+- Validation and cast errors return 400 with usable messages
 
-**Written but not exercised:**
+**Mobile — built and bundling, not yet seen running:**
 
-- BullMQ queue round-trip, retries and cron schedules — no Redis yet, so `npm run worker` has never connected
-- Cloudinary upload — no credentials; the routes return 503 without them
-- Paystack `initiatePayment`, `verifyPayment` and `refundOrder` against the real sandbox
+- All 16 mobile screens from the design spec, plus OTP and Profile
+- Full design system in code; two-surface rule enforced by component choice
+- Mock data shaped like the real API responses
+- OTP delivered through an in-app notification banner until an SMS provider exists
+- `tsc --noEmit` clean; `expo export` succeeds with no warnings
+
+**Written but never actually run:**
+
+- BullMQ queue round-trip, retries and cron schedules — no `REDIS_URL` yet
+- Cloudinary uploads — no credentials; routes return 503
+- Paystack `initiatePayment` / `verifyPayment` / `refundOrder` against the live sandbox
+- The mobile app on a simulator or device
 
 **Not started:**
 
-- Mobile app
-- Admin dashboard
+- Admin dashboard (Next.js, screens 17-20)
 - `packages/shared`
-- Push notifications (the price alert handler logs instead)
-- Email (the weekly report handler logs instead)
+- Wiring the mobile app to the API
+- Push notifications, email
 
 **Immediate next steps:**
 
-1. Upstash Redis, set `REDIS_URL`, confirm `npm run worker` connects and the minute-by-minute sweep fires
-2. Cloudinary credentials, then upload one real product image
-3. A real Paystack test key plus a tunnel for the webhook, then one sandbox Mobile Money payment end to end
-4. Clear the accumulated test data out of Atlas
-5. Start the mobile app — the API surface is stable and documented
+1. Open the app on a device or simulator and walk all 18 screens
+2. Connect the mobile app to the API, starting with auth — the server is stable and documented
+3. Upstash Redis, so the worker and expiry sweep actually run
+4. Cloudinary credentials, then real product images
+5. A Paystack test key plus a tunnel, then one sandbox Mobile Money payment end to end
+6. Clear the accumulated test data out of Atlas

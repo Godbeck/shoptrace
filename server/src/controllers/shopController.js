@@ -4,9 +4,19 @@ import { sendError } from '../utils/apiError.js';
 
 export const createShop = async (req, res) => {
     try {
-        const {name, category, description, phone, address, latitude, longitude, openingHours, deliveryRange } = req.body;
+        const {name, categories, category, description, phone, address, latitude, longitude, openingHours, deliveryRange } = req.body;
 
-        if (!name || !category || !phone || !address || latitude === undefined || longitude === undefined) {
+        // Accepts either a list or a single value, so an older client sending
+        // one category still works.
+        const chosen = Array.isArray(categories)
+            ? categories
+            : categories
+              ? [categories]
+              : category
+                ? [category]
+                : [];
+
+        if (!name || chosen.length === 0 || !phone || !address || latitude === undefined || longitude === undefined) {
             return res.status(400).json({ message: 'Please fill in all required fields' });
         }
 
@@ -18,7 +28,7 @@ export const createShop = async (req, res) => {
         const shop = await Shop.create({
             owner: req.user._id,
             name,
-            category,
+            categories: chosen,
             description,
             phone,
             address,
@@ -60,7 +70,9 @@ export const getNearbyShops = async (req, res) => {
         };
 
         if (category) {
-            query.category = category;
+            // Matching one value against the array - MongoDB does this
+            // natively, so no $in is needed.
+            query.categories = category;
         }
 
         const shops = await Shop.find(query).populate('owner', 'name email');
@@ -102,7 +114,7 @@ export const updateMyShop = async (req, res) => {
 
         const allowedFields = [
             'name',
-            'category',
+            'categories',
             'description',
             'phone',
             'address',
@@ -118,6 +130,12 @@ export const updateMyShop = async (req, res) => {
                 shop[field] = req.body[field];
             }
         });
+
+        // A client sending a single category rather than a list should not
+        // end up with a string where an array belongs.
+        if (req.body.categories !== undefined && !Array.isArray(req.body.categories)) {
+            shop.categories = [req.body.categories];
+        }
 
         // Coordinates arrive named and are flipped here, same as on create.
         if (req.body.latitude !== undefined && req.body.longitude !== undefined) {

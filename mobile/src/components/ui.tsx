@@ -7,6 +7,7 @@
 import React from "react";
 import {
   ActivityIndicator,
+  Image,
   Pressable,
   StyleSheet,
   Text,
@@ -218,39 +219,74 @@ export const VerifiedBadge = () => (
 /* ------------------------------------------------------------ ImageWell */
 
 /**
- * Product and shop images are not wired up yet, so every image position is a
- * cream-tint well with a muted icon. Swapping these for real <Image> tags is
- * a single change per usage once Cloudinary is connected.
+ * Every image position in the app. Given a `uri` it shows the photo; given
+ * none it falls back to a cream well with a muted icon.
+ *
+ * The fallback is not a placeholder for unfinished work - most listings will
+ * genuinely have no photo, because a merchant on a slow connection often skips
+ * it. An empty slot has to look deliberate rather than broken.
+ *
+ * Callers pass an already-sized Cloudinary URL from lib/images.ts. This
+ * component does not size it, because only the caller knows how big it is
+ * being drawn.
  */
 export const ImageWell = ({
   size,
   icon = "cube-outline",
   style,
   radius: r = radius.well,
+  uri,
   children,
 }: {
   size?: number;
   icon?: IconName;
   style?: ViewStyle;
   radius?: number;
+  uri?: string;
   children?: React.ReactNode;
-}) => (
-  <View
-    style={[
-      styles.well,
-      { borderRadius: r },
-      size ? { width: size, height: size } : null,
-      style,
-    ]}
-  >
-    <Ionicons
-      name={icon}
-      size={size ? Math.max(14, size * 0.42) : 30}
-      color={colors.textMuted}
-    />
-    {children}
-  </View>
-);
+}) => {
+  // A URL is a promise, not a guarantee. The image it points at can be gone -
+  // deleted by the merchant, purged, renamed, or simply unreachable on a bad
+  // connection. An <Image> whose source 404s renders NOTHING: not an error,
+  // not a placeholder, an invisible hole the size of the picture. Falling back
+  // to the same icon we use for "no photo" keeps a broken URL looking like an
+  // empty slot instead of a broken app.
+  const [failed, setFailed] = React.useState(false);
+
+  // A new URL deserves a fresh attempt - otherwise a recycled card that once
+  // held a dead image would refuse to show a good one.
+  React.useEffect(() => setFailed(false), [uri]);
+
+  const showImage = Boolean(uri) && !failed;
+
+  return (
+    <View
+      style={[
+        styles.well,
+        { borderRadius: r },
+        showImage ? { overflow: "hidden" } : null,
+        size ? { width: size, height: size } : null,
+        style,
+      ]}
+    >
+      {showImage ? (
+        <Image
+          source={{ uri }}
+          style={StyleSheet.absoluteFill}
+          resizeMode="cover"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <Ionicons
+          name={icon}
+          size={size ? Math.max(14, size * 0.42) : 30}
+          color={colors.textMuted}
+        />
+      )}
+      {children}
+    </View>
+  );
+};
 
 /* ---------------------------------------------------------------- Field */
 

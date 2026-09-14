@@ -19,6 +19,8 @@ export type CardProduct = {
   previousPrice?: number;
   /** How many shops stock it. 1 when the API has not grouped by product. */
   shopCount: number;
+  /** The cover photo - the first of the product's images. Often absent. */
+  imageUrl?: string;
   inStock: boolean;
   isFeatured: boolean;
   distanceMeters: number;
@@ -37,4 +39,6 @@ export type CardShop = {
   reviewCount: number;
   status: "pending" | "verified" | "suspended";
   isFeatured: boolean;
+  /** The shop's logo. Often absent. */
+  imageUrl?: string;
 };

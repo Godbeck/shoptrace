@@ -12,6 +12,7 @@
  */
 import type { ApiProduct, ApiShop } from "./api";
 import type { CardProduct, CardShop } from "./viewModels";
+import { pickRepresentative } from "./images";
 
 /** Haversine, matching the server's own distance helper. */
 export const metresBetween = (
@@ -37,6 +38,8 @@ export const toCardProduct = (p: ApiProduct): CardProduct => ({
   category: p.category,
   fromPrice: p.price,
   shopCount: 1,
+  // The first image is the cover, by the same convention the product form uses.
+  imageUrl: p.imageUrls?.[0],
   inStock: p.inStock,
   isFeatured: p.isFeatured,
   // $geoNear writes `distance` in metres onto each search result.
@@ -88,6 +91,13 @@ export const groupByProduct = (products: ApiProduct[]): CardProduct[] => {
       distanceMeters: Math.round(
         Math.min(...listings.map((l) => l.distance ?? 0)),
       ),
+      // A photo describes the PRODUCT, not the offer. The cheapest shop may not
+      // have uploaded one while another shop did, and a grey placeholder beside
+      // a real photo helps nobody. Price still comes from the cheapest listing;
+      // only the picture is borrowed, by the same ranked, deterministic rule
+      // the detail screen uses for its hero - so the photo you tap is the photo
+      // you land on.
+      imageUrl: pickRepresentative(listings)?.imageUrls?.[0],
       // One shop having it is enough for the card to read as available.
       inStock: listings.some((l) => l.inStock),
       isFeatured: listings.some((l) => l.isFeatured),
@@ -115,5 +125,6 @@ export const toCardShop = (
     reviewCount: s.reviewCount,
     status: s.status,
     isFeatured: s.isFeatured,
+    imageUrl: s.logoUrl,
   };
 };

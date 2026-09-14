@@ -11,6 +11,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { borderWidth, card, colors, radius, spacing, type } from "@/theme";
 import { cedis, distance, dropPercent } from "@/lib/format";
 import { ImageWell, InkPill, StatusPill, VerifiedBadge } from "./ui";
+import { cardImage, logoImage } from "@/lib/images";
 import type { CardProduct, CardShop } from "@/lib/viewModels";
 
 /* ---------------------------------------------------------- PriceFrom */
@@ -83,6 +84,7 @@ export const ProductCard = ({
       <ImageWell
         style={styles.fill}
         radius={0}
+        uri={cardImage(product.imageUrl)}
         icon={iconForCategory(product.category)}
       />
       {product.isFeatured ? (
@@ -131,7 +133,11 @@ export const ShopCard = ({
     ]}
   >
     <View style={styles.shopTop}>
-      <ImageWell size={40} icon={iconForCategory(shop.categories?.[0] ?? "Other")} />
+      <ImageWell
+      size={40}
+      uri={logoImage(shop.imageUrl)}
+      icon={iconForCategory(shop.categories?.[0] ?? "Other")}
+    />
       <View style={{ flex: 1 }}>
         <Text style={styles.productName} numberOfLines={1}>
           {shop.name}

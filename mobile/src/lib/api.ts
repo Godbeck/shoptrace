@@ -1,4 +1,5 @@
 import Constants from "expo-constants";
+import { File as FsFile } from "expo-file-system";
 
 /**
  * The one place that knows how to reach the server.
@@ -134,6 +135,91 @@ const safeParse = (text: string) => {
   }
 };
 
+/**
+ * Multipart upload, for images.
+ *
+ * Deliberately NOT routed through `request`, because the two disagree on one
+ * header: `request` always sets Content-Type: application/json, while a
+ * multipart body must carry a boundary string that only fetch can generate.
+ * Setting Content-Type by hand here would omit that boundary and multer would
+ * parse zero files out of a body that plainly contains one.
+ *
+ * THE FILE PART SHAPE MATTERS, and it changed under us. For a decade React
+ * Native accepted `{ uri, name, type }` and let the NATIVE networking layer
+ * stream the file off disk. Expo SDK 57 replaces global fetch with a
+ * spec-compliant one written in JavaScript (expo/src/winter/fetch), which
+ * builds the body itself and accepts only a string, a Blob, or an object with
+ * a `bytes()` method. A `uri` object now throws "Unsupported FormDataPart
+ * implementation" while building the request - so the upload fails before a
+ * single byte leaves the phone, which reads exactly like a dead network.
+ *
+ * expo-file-system's `File` has the native `bytes()` that check wants, so the
+ * photo is still read by native code rather than being inflated into a JS
+ * buffer - which is the point, on the mid-range phones merchants actually use.
+ * It is wrapped rather than passed directly because the multipart part headers
+ * are read from `.name` and `.type` on the object, and the picker knows the
+ * real mime type more reliably than a filename extension does.
+ */
+export const uploadImages = async (
+  path: string,
+  files: { uri: string; name: string; type: string }[],
+): Promise<{ count: number; images: { url: string; publicId: string }[] }> => {
+  const form = new FormData();
+  for (const file of files) {
+    const handle = new FsFile(file.uri);
+    const part = {
+      // Read natively, on demand, when the body is assembled.
+      bytes: () => handle.bytes(),
+      // These two become the part's Content-Disposition filename and
+      // Content-Type. multer's fileFilter rejects anything outside
+      // JPEG/PNG/WebP/HEIC, so a missing type would fail the whole upload.
+      name: file.name,
+      type: file.type,
+    };
+    // The field name must be "images" - it is what multer .array("images", 5)
+    // listens for on the server.
+    form.append("images", part as unknown as Blob);
+  }
+
+  // Deliberately NO AbortController here, unlike `request`. React Native's
+  // fetch hands a multipart body to the native networking layer, and pairing
+  // that with an abort signal makes it reject the request outright with a bare
+  // "Network request failed" - before a byte leaves the phone. The platform
+  // applies its own timeout to uploads, so nothing is lost by omitting ours.
+  try {
+    const response = await fetch(`${API_URL}${path}`, {
+      method: "POST",
+      headers: {
+        // No Content-Type. fetch fills it in with the boundary.
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      },
+      body: form,
+    });
+
+    const text = await response.text();
+    const data = text ? safeParse(text) : null;
+
+    if (!response.ok) {
+      throw new ApiError(
+        response.status,
+        data?.message || `Upload failed (${response.status})`,
+        data,
+      );
+    }
+    return data;
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    // Do NOT flatten this to "cannot reach the server". A multipart upload
+    // fails for reasons a GET never does - an unreadable photo, a rejected
+    // file type, a body the native layer could not build - and reporting
+    // every one of them as a network fault sends you debugging the wrong
+    // machine. The underlying message is the only thing that identifies it.
+    const detail = (error as Error)?.message || String(error);
+    console.warn("[upload] failed:", API_URL + path, "-", detail);
+    throw new ApiError(0, `Upload failed: ${detail} (${API_URL}${path})`);
+  }
+};
+
 export const api = {
   get: <T = any>(path: string) => request<T>(path),
   post: <T = any>(path: string, body?: unknown) =>
@@ -181,6 +267,7 @@ export type ApiProduct = {
   stockCount: number;
   inStock: boolean;
   imageUrls: string[];
+  condition?: string;
   isFeatured: boolean;
   viewCount: number;
   shop: any;

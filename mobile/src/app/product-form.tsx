@@ -5,10 +5,17 @@
  * the price-history hooks fire. Change a price here and a PriceHistory record
  * is written automatically - visible on the customer product screen.
  *
- * Image upload is the one part still stubbed, because Cloudinary is not
- * connected. The tile says so rather than pretending to work.
+ * Images upload to Cloudinary BEFORE the product is saved, because a new
+ * product has no id yet to attach them to. The upload returns URLs, which then
+ * ride along in the same body as the rest of the form.
+ *
+ * The consequence: abandoning the form after picking a photo leaves the file
+ * on Cloudinary with nothing pointing at it. Sweeping orphans is a job for the
+ * background worker, not for this screen.
  */
 import { useState } from "react";
+import { Image } from "react-native";
+import * as ImagePicker from "expo-image-picker";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -25,10 +32,11 @@ import { Ionicons } from "@expo/vector-icons";
 import { InkHeader } from "@/components/headers";
 import { Button, Card, Divider, Field, Toggle } from "@/components/ui";
 import { borderWidth, colors, radius, spacing, type } from "@/theme";
-import { api, type ApiProduct } from "@/lib/api";
+import { api, uploadImages, type ApiProduct } from "@/lib/api";
 import { useAsync } from "@/lib/useApi";
 import { useSession } from "@/lib/session";
 import { CATEGORIES } from "@/lib/categories";
+import { thumb } from "@/lib/images";
 
 // A product is exactly one category, unlike a shop.
 const PRODUCT_CATEGORIES = CATEGORIES;
@@ -56,6 +64,8 @@ export default function ProductForm() {
   const [stock, setStock] = useState("");
   const [condition, setCondition] = useState("Brand new");
   const [busy, setBusy] = useState(false);
+  const [imageUrls, setImageUrls] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
 
   // Fill the form once, when the product arrives.
   if (editing && existing.data && !ready) {
@@ -66,8 +76,58 @@ export default function ProductForm() {
     setDescription(p.description ?? "");
     setPrice(String(p.price));
     setStock(String(p.stockCount));
+    setImageUrls(p.imageUrls ?? []);
     setReady(true);
   }
+
+  const MAX_IMAGES = 5;
+
+  const pickImages = async () => {
+    // Asked only when the button is pressed, not on mount: a merchant who
+    // never adds a photo is never asked for their library.
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      notify({
+        title: "Photo access is off",
+        body: "Enable photo access in Settings to add product images.",
+      });
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsMultipleSelection: true,
+      selectionLimit: MAX_IMAGES - imageUrls.length,
+      quality: 0.8,
+    });
+    if (result.canceled || result.assets.length === 0) return;
+
+    setUploading(true);
+    try {
+      const { images } = await uploadImages(
+        "/uploads/products",
+        result.assets.map((asset, i) => ({
+          uri: asset.uri,
+          // multer treats a part with no filename as a plain text field, so
+          // a name is required even though the server ignores it.
+          name: asset.fileName ?? `photo-${Date.now()}-${i}.jpg`,
+          type: asset.mimeType ?? "image/jpeg",
+        })),
+      );
+      setImageUrls((current) => [...current, ...images.map((i) => i.url)]);
+      notify({
+        title: `${images.length} photo${images.length === 1 ? "" : "s"} uploaded`,
+        tone: "success",
+      });
+    } catch (error) {
+      notifyError(error, "Could not upload the photos");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const removeImage = (url: string) =>
+    setImageUrls((current) => current.filter((u) => u !== url));
 
   const submit = async () => {
     if (!name.trim() || !category || !price.trim()) {
@@ -94,6 +154,7 @@ export default function ProductForm() {
       price: priceValue,
       stockCount: stockValue,
       condition,
+      imageUrls,
     };
 
     setBusy(true);
@@ -152,13 +213,66 @@ export default function ProductForm() {
       >
         {/* Images first - they matter most to a listing. */}
         <Card style={{ gap: 10 }}>
-          <View style={styles.uploadZone}>
-            <Ionicons name="camera-outline" size={26} color={colors.textTertiary} />
-            <Text style={styles.uploadTitle}>Product photos</Text>
-            <Text style={styles.uploadSub}>
-              Photo uploads are coming soon
-            </Text>
-          </View>
+          {imageUrls.length > 0 ? (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ gap: 8 }}
+            >
+              {imageUrls.map((url, index) => (
+                <View key={url} style={styles.thumbWrap}>
+                  <Image
+                    // w_200 is all a 78px thumbnail needs. Asking Cloudinary
+                    // for the full 1200px here would cost the merchant data
+                    // to look at their own photo.
+                    source={{ uri: thumb(url) }}
+                    style={styles.thumb}
+                  />
+                  {index === 0 ? (
+                    <View style={styles.coverTag}>
+                      <Text style={styles.coverText}>Cover</Text>
+                    </View>
+                  ) : null}
+                  <Pressable
+                    style={styles.thumbRemove}
+                    onPress={() => removeImage(url)}
+                    hitSlop={6}
+                  >
+                    <Ionicons name="close" size={12} color={colors.cream} />
+                  </Pressable>
+                </View>
+              ))}
+            </ScrollView>
+          ) : null}
+
+          <Pressable
+            onPress={pickImages}
+            disabled={uploading || imageUrls.length >= MAX_IMAGES}
+            style={styles.uploadZone}
+          >
+            {uploading ? (
+              <>
+                <ActivityIndicator color={colors.ink} />
+                <Text style={styles.uploadSub}>Uploading...</Text>
+              </>
+            ) : (
+              <>
+                <Ionicons
+                  name="camera-outline"
+                  size={26}
+                  color={colors.textTertiary}
+                />
+                <Text style={styles.uploadTitle}>
+                  {imageUrls.length === 0 ? "Add product photos" : "Add another"}
+                </Text>
+                <Text style={styles.uploadSub}>
+                  {imageUrls.length >= MAX_IMAGES
+                    ? `${MAX_IMAGES} photos is the maximum`
+                    : `${imageUrls.length} of ${MAX_IMAGES} · the first one is the cover`}
+                </Text>
+              </>
+            )}
+          </Pressable>
         </Card>
 
         <Section title="Product details">
@@ -313,6 +427,34 @@ const styles = StyleSheet.create({
     borderStyle: "dashed",
     borderColor: colors.border,
   },
+  thumbWrap: { width: 78, height: 78 },
+  thumb: {
+    width: 78,
+    height: 78,
+    borderRadius: radius.well,
+    backgroundColor: colors.cream,
+  },
+  thumbRemove: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: colors.ink,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  coverTag: {
+    position: "absolute",
+    bottom: 4,
+    left: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: colors.ink,
+  },
+  coverText: { fontSize: 9, color: colors.cream },
   uploadTitle: { fontSize: 13, fontWeight: "500", color: colors.textPrimary },
   uploadSub: {
     fontSize: 10,

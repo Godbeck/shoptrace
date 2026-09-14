@@ -3,17 +3,36 @@ import { v2 as cloudinary } from "cloudinary";
 /**
  * Cloudinary reads CLOUDINARY_URL from the environment on its own, but the
  * discrete variables are supported too so either style of setup works.
+ *
+ * Configured on FIRST USE, not at import time. ES modules evaluate every
+ * import before any module body runs, so this file's top level executes
+ * before app.js reaches its own dotenv.config() line - at which point every
+ * CLOUDINARY_* variable is still undefined and the SDK is handed nothing.
+ * The failure is quiet and confusing: isCloudinaryConfigured() is a function,
+ * so by request time it sees the env and returns true, while the SDK has no
+ * api_key and every upload dies with "Must supply api_key".
  */
-if (!process.env.CLOUDINARY_URL) {
-  cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET,
-    secure: true,
-  });
-} else {
-  cloudinary.config({ secure: true });
-}
+let configured = false;
+
+const ensureConfigured = () => {
+  if (configured) return;
+
+  if (!process.env.CLOUDINARY_URL) {
+    cloudinary.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET,
+      secure: true,
+    });
+  } else {
+    // The SDK parses CLOUDINARY_URL itself, but only when it reads the
+    // environment - which is now, rather than at import.
+    cloudinary.config(true);
+    cloudinary.config({ secure: true });
+  }
+
+  configured = true;
+};
 
 export const isCloudinaryConfigured = () =>
   Boolean(
@@ -31,6 +50,7 @@ export const isCloudinaryConfigured = () =>
  */
 export const uploadBuffer = (buffer, folder) =>
   new Promise((resolve, reject) => {
+    ensureConfigured();
     const stream = cloudinary.uploader.upload_stream(
       {
         folder,
@@ -47,7 +67,9 @@ export const uploadBuffer = (buffer, folder) =>
     stream.end(buffer);
   });
 
-export const destroyImage = (publicId) =>
-  cloudinary.uploader.destroy(publicId, { resource_type: "image" });
+export const destroyImage = (publicId) => {
+  ensureConfigured();
+  return cloudinary.uploader.destroy(publicId, { resource_type: "image" });
+};
 
 export default cloudinary;

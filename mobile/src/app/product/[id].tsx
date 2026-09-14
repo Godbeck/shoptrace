@@ -12,11 +12,13 @@
 import { useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -42,6 +44,7 @@ import { useAsync, useCoords } from "@/lib/useApi";
 import { useSession } from "@/lib/session";
 import { useCart } from "@/lib/cart";
 import { useShop } from "@/lib/shop";
+import { heroImage, pickRepresentative, thumb } from "@/lib/images";
 import {
   reliabilityLabel,
   stockLabel,
@@ -55,6 +58,7 @@ type Offer = {
   stockCount: number;
   inStock: boolean;
   condition: string;
+  imageUrls?: string[];
   isSelected: boolean;
   stockConfirmedAt?: string;
   stockConfidence?: StockConfidence;
@@ -101,6 +105,11 @@ export default function ProductDetail() {
   const [target, setTarget] = useState("");
   const [savingAlert, setSavingAlert] = useState(false);
   const [addingFrom, setAddingFrom] = useState<string | null>(null);
+  const [heroIndex, setHeroIndex] = useState(0);
+  // Hero images that failed to load, so a dead URL falls back to the category
+  // icon instead of leaving a 260px hole where the product should be.
+  const [brokenHero, setBrokenHero] = useState<string[]>([]);
+  const { width } = useWindowDimensions();
 
   // Bringing the price-alert field above the keyboard.
   //
@@ -229,6 +238,23 @@ export default function ProductDetail() {
     }
   };
 
+  // The hero comes from ONE shop, chosen by the same ranked rule the browse
+  // card used - so the photo you tapped is the photo you land on. Falling back
+  // to this product's own images covers the case where the comparison has not
+  // loaded, or where only this shop lists the item at all.
+  const representative = pickRepresentative(offers);
+  const heroImages = (
+    representative?.imageUrls?.length
+      ? representative.imageUrls
+      : (product.imageUrls ?? [])
+  ).filter((url) => !brokenHero.includes(url));
+  const heroShopName =
+    representative && representative.imageUrls?.length
+      ? representative.shop.name
+      : product.imageUrls?.length
+        ? product.shopName
+        : null;
+
   const points = (history.data?.history ?? []).slice(0, 7).reverse();
   const prices = points.map((h) => h.price);
   const hi = prices.length ? Math.max(...prices) : product.price;
@@ -247,13 +273,68 @@ export default function ProductDetail() {
         automaticallyAdjustKeyboardInsets
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.imageArea}>
-          <Ionicons
-            name={iconForCategory(product.category)}
-            size={64}
-            color={colors.textMuted}
-          />
-        </View>
+        {/* The gallery belongs to ONE shop - whichever pickRepresentative
+            chose. Pooling every shop's photos would let you swipe between
+            four different physical phones in four different conditions and
+            think you were looking at one. */}
+        {heroImages.length > 0 ? (
+          <View>
+            <ScrollView
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              onMomentumScrollEnd={(e) =>
+                setHeroIndex(
+                  Math.round(e.nativeEvent.contentOffset.x / width),
+                )
+              }
+            >
+              {heroImages.map((url) => (
+                <Image
+                  key={url}
+                  source={{ uri: heroImage(url) }}
+                  style={{ width, height: 260 }}
+                  resizeMode="cover"
+                  onError={() =>
+                    setBrokenHero((current) =>
+                      current.includes(url) ? current : [...current, url],
+                    )
+                  }
+                />
+              ))}
+            </ScrollView>
+
+            {heroImages.length > 1 ? (
+              <View style={styles.dots}>
+                {heroImages.map((url, i) => (
+                  <View
+                    key={url}
+                    style={[styles.dot, i === heroIndex && styles.dotOn]}
+                  />
+                ))}
+              </View>
+            ) : null}
+
+            {heroShopName ? (
+              // Whose photo this is. Without it the picture reads as the
+              // product's own, and a customer buying the cheaper used one
+              // from another shop would expect what they saw here.
+              <View style={styles.heroCredit}>
+                <Text style={styles.heroCreditText} numberOfLines={1}>
+                  Photo from {heroShopName}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        ) : (
+          <View style={styles.imageArea}>
+            <Ionicons
+              name={iconForCategory(product.category)}
+              size={64}
+              color={colors.textMuted}
+            />
+          </View>
+        )}
 
         <View style={{ paddingHorizontal: spacing.gutter, gap: 10 }}>
           {/* The price row is the heart of the screen. */}
@@ -337,7 +418,16 @@ export default function ProductDetail() {
                   ) : null}
 
                   <View style={styles.offerTop}>
-                    <ImageWell size={40} icon="storefront-outline" />
+                    {/* The shop's OWN photo of their OWN unit. Never the
+                        hero - condition is per listing, and a used phone
+                        must not borrow the sealed-box picture. Shops with
+                        no photo get the storefront icon, not someone
+                        else's product. */}
+                    <ImageWell
+                      size={40}
+                      uri={thumb(offer.imageUrls?.[0])}
+                      icon="storefront-outline"
+                    />
                     <View style={{ flex: 1, gap: 3 }}>
                       <Text style={styles.shopName} numberOfLines={1}>
                         {offer.shop.name}
@@ -486,6 +576,32 @@ export default function ProductDetail() {
 }
 
 const styles = StyleSheet.create({
+  dots: {
+    position: "absolute",
+    bottom: 10,
+    alignSelf: "center",
+    flexDirection: "row",
+    gap: 5,
+  },
+  dot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: colors.ink,
+    opacity: 0.25,
+  },
+  dotOn: { opacity: 0.85 },
+  heroCredit: {
+    position: "absolute",
+    top: 10,
+    left: spacing.gutter,
+    maxWidth: "70%",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    backgroundColor: colors.cream,
+  },
+  heroCreditText: { fontSize: 10, color: colors.textSecondary },
   imageArea: {
     height: 190,
     backgroundColor: colors.creamTint,

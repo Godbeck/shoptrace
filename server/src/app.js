@@ -1,3 +1,7 @@
+// FIRST, before any other import. ES modules evaluate every import before any
+// module body, so a module that reads process.env at its top level (config/
+// cloudinary.js did) would otherwise run before dotenv.config() below.
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';

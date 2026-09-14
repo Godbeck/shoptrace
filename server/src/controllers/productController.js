@@ -476,6 +476,10 @@ export const compareProduct = async (req, res) => {
           stockCount: p.stockCount,
           inStock: p.inStock,
           condition: p.condition,
+          // Each offer carries its OWN photos. A used unit must never be shown
+          // wearing the sealed-box photo from a different shop - condition is
+          // per listing, so the picture has to be too.
+          imageUrls: p.imageUrls,
           // How much this stock figure can be trusted, and how reliable the
           // shop behind it has been.
           stockConfirmedAt: p.stockConfirmedAt,

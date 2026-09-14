@@ -12,7 +12,10 @@ export type CardProduct = {
   _id: string;
   name: string;
   brand?: string;
+  /** The primary category - what the icon and the single-line chip use. */
   category: string;
+  /** Every category the merchant chose, in their order. */
+  categories: string[];
   /** The lowest price seen for this product. */
   fromPrice: number;
   /** Set only when there is a drop to show. */

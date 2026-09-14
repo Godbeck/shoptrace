@@ -162,6 +162,10 @@ export const getShopSummary = async (req, res) => {
             $group: {
               _id: "$subOrders.items.product",
               name: { $first: "$subOrders.items.name" },
+              // The snapshot taken at checkout, not the live product - the
+              // merchant may have changed the photo since, and this row is a
+              // record of what was sold.
+              imageUrl: { $first: "$subOrders.items.imageUrl" },
               units: { $sum: "$subOrders.items.quantity" },
               revenue: { $sum: "$subOrders.items.lineTotal" },
               orders: { $sum: 1 },
@@ -250,6 +254,7 @@ export const getShopSummary = async (req, res) => {
       topProducts: topProducts.map((p) => ({
         product: p._id,
         name: p.name,
+        imageUrl: p.imageUrl ?? "",
         units: p.units,
         orders: p.orders,
         revenue: round(p.revenue),

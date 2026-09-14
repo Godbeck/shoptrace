@@ -9,6 +9,17 @@
  * "Server error", and the app had nothing useful to show the user.
  */
 export const classifyError = (error) => {
+  // An error a controller raised deliberately, carrying the status it wants.
+  // Checked first so a hand-written 400 is never reclassified as something
+  // else - or, worse, fall through to a 500 with its message swallowed.
+  if (
+    Number.isInteger(error.statusCode) &&
+    error.statusCode >= 400 &&
+    error.statusCode < 600
+  ) {
+    return { status: error.statusCode, message: error.message };
+  }
+
   // Schema validation: the client sent something the model refuses.
   if (error.name === "ValidationError" && error.errors) {
     return {

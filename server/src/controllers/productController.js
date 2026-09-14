@@ -10,7 +10,81 @@ import {
   stockConfidence,
 } from "../utils/stockConfidence.js";
 import { sendError } from "../utils/apiError.js";
+import { variantsForCategories } from "../utils/categories.js";
 
+/**
+ * Clean a variants array coming off the wire.
+ *
+ * Rejects what the category does not support, so a bag of cement cannot
+ * arrive with a colour, and drops rows that name nothing - an empty colour
+ * AND empty size is not a variant, it is the product itself.
+ *
+ * Duplicates are refused rather than merged. Two rows both saying "Blue /
+ * 45" would give the same shelf two stock numbers, and nothing downstream
+ * could say which one is true.
+ */
+const sanitiseVariants = (raw, categories) => {
+  if (!Array.isArray(raw)) return null;
+  if (raw.length === 0) return [];
+
+  const spec = variantsForCategories(categories);
+  if (!spec.color && !spec.size) {
+    const error = new Error(
+      `${categories.join(" or ")} products do not have colours or sizes`,
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const seen = new Set();
+  const clean = [];
+
+  for (const item of raw) {
+    const color = spec.color ? String(item?.color ?? "").trim() : "";
+    const size = spec.size ? String(item?.size ?? "").trim() : "";
+
+    if (!color && !size) continue;
+
+    const key = `${color.toLowerCase()}|${size.toLowerCase()}`;
+    if (seen.has(key)) {
+      const error = new Error(
+        `Duplicate option: ${[color, size].filter(Boolean).join(" / ")}`,
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+    seen.add(key);
+
+    const stockCount = Number(item?.stockCount ?? 0);
+    if (!Number.isInteger(stockCount) || stockCount < 0) {
+      const error = new Error("Each option needs a whole stock count of 0 or more");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    // Only carried when the merchant actually set one. An empty string must
+    // not become 0, or a variant would silently go free.
+    const priceRaw = item?.price;
+    const hasPrice =
+      priceRaw !== undefined && priceRaw !== null && String(priceRaw).trim() !== "";
+    const price = hasPrice ? Number(priceRaw) : undefined;
+
+    if (hasPrice && (Number.isNaN(price) || price < 0)) {
+      const error = new Error("An option price cannot be negative");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    // Preserved so an update edits the existing row instead of replacing it,
+    // which would orphan the variant id sitting on live orders and carts.
+    const entry = { color, size, stockCount };
+    if (item?._id) entry._id = item._id;
+    if (hasPrice) entry.price = price;
+    clean.push(entry);
+  }
+
+  return clean;
+};
 export const createProduct = async (req, res) => {
   try {
     const shop = await Shop.findOne({ owner: req.user._id });
@@ -59,19 +133,22 @@ export const createProduct = async (req, res) => {
     const {
       name,
       brand,
-      category,
+      categories,
       price,
       description,
       stockCount,
       condition,
       imageUrls,
+      variants,
     } = req.body;
 
-    if (!name || !category || price === undefined) {
+    if (!name || !categories?.length || price === undefined) {
       return res
         .status(400)
-        .json({ message: "Name, category and price are required" });
+        .json({ message: "Name, at least one category, and price are required" });
     }
+
+    const cleanVariants = sanitiseVariants(variants, categories) ?? [];
 
     const product = await Product.create({
       shop: shop._id,
@@ -79,10 +156,13 @@ export const createProduct = async (req, res) => {
       location: shop.location,
       name,
       brand,
-      category,
+      categories,
       description,
       price,
-      stockCount: stockCount || 0,
+      variants: cleanVariants,
+      // With variants the pre-save hook overwrites this with their sum, so the
+      // value sent here only matters for a product that does not vary.
+      stockCount: cleanVariants.length ? 0 : stockCount || 0,
       condition,
       imageUrls: imageUrls || [],
       // Listing it counts as vouching for the count.
@@ -139,7 +219,9 @@ export const searchProducts = async (req, res) => {
     }
 
     if (category) {
-      matchStage.category = category;
+      // Multikey index: matching a plain value against an array field matches
+      // a document whose array CONTAINS it, so this needs no $in.
+      matchStage.categories = category;
     }
 
     if (inStockOnly === "true") {
@@ -257,7 +339,7 @@ export const updateProduct = async (req, res) => {
     const allowedFields = [
       "name",
       "brand",
-      "category",
+      "categories",
       "description",
       "price",
       "stockCount",
@@ -270,6 +352,17 @@ export const updateProduct = async (req, res) => {
         product[field] = req.body[field];
       }
     });
+
+    // Variants are handled outside the allowlist because they need validating
+    // against the category, which may itself be changing in this same request.
+    if (req.body.variants !== undefined) {
+      const clean = sanitiseVariants(req.body.variants, product.categories);
+      if (clean) {
+        product.variants = clean;
+        // Merchant vouching for the counts, same as editing stockCount.
+        product.stockConfirmedAt = new Date();
+      }
+    }
 
     // A merchant touching the stock figure is exactly the signal we track.
     // Note this is NOT set when checkout decrements stock - an automatic
@@ -480,6 +573,9 @@ export const compareProduct = async (req, res) => {
           // wearing the sealed-box photo from a different shop - condition is
           // per listing, so the picture has to be too.
           imageUrls: p.imageUrls,
+          // Each shop stocks its own colours and sizes - the picker on the
+          // detail screen is per offer, not one choice for the whole product.
+          variants: p.variants,
           // How much this stock figure can be trusted, and how reliable the
           // shop behind it has been.
           stockConfirmedAt: p.stockConfirmedAt,
@@ -507,7 +603,7 @@ export const compareProduct = async (req, res) => {
     res.status(200).json({
       name: product.name,
       brand: product.brand,
-      category: product.category,
+      categories: product.categories,
       count: offers.length,
       lowest: prices.length ? Math.min(...prices) : product.price,
       highest: prices.length ? Math.max(...prices) : product.price,

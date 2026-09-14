@@ -11,6 +11,8 @@
  */
 import { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -22,12 +24,14 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
 import { InkHeader } from "@/components/headers";
 import { Button, Card, Divider, Field, StatusPill } from "@/components/ui";
 import { borderWidth, colors, radius, spacing, type } from "@/theme";
-import { api } from "@/lib/api";
+import { api, uploadImages } from "@/lib/api";
 import { useSession } from "@/lib/session";
 import { useShop } from "@/lib/shop";
+import { logoImage } from "@/lib/images";
 import { CATEGORIES } from "@/lib/categories";
 
 
@@ -63,6 +67,55 @@ export default function ShopSettings() {
     setRange(shop.deliveryRange);
   }, [shop]);
 
+const [uploadingLogo, setUploadingLogo] = useState(false);
+
+  /**
+   * The shop logo. One image, replacing whatever was there.
+   *
+   * Squared on upload rather than on display, because a logo appears in a
+   * dozen small round wells across both surfaces and a letterboxed one looks
+   * broken in every single place.
+   */
+  const pickLogo = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      notify({
+        title: "Photo access is off",
+        body: "Enable photo access in Settings to add a shop logo.",
+      });
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.85,
+    });
+    if (result.canceled || !result.assets[0]) return;
+
+    const asset = result.assets[0];
+    setUploadingLogo(true);
+    try {
+      // Unlike product images, this endpoint saves the logo on to the shop
+      // itself and returns the stored URL. There is nothing left to PATCH -
+      // doing so would only risk writing back a value we misread.
+      await uploadImages<{ logoUrl: string }>("/uploads/shop-logo", [
+        {
+          uri: asset.uri,
+          name: asset.fileName ?? `logo-${Date.now()}.jpg`,
+          type: asset.mimeType ?? "image/jpeg",
+        },
+      ]);
+      await reload();
+      notify({ title: "Logo updated", tone: "success" });
+    } catch (error) {
+      notifyError(error, "Could not update the logo");
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
+
   const save = async () => {
     setBusy(true);
     try {
@@ -97,9 +150,26 @@ export default function ShopSettings() {
         </View>
 
         <View style={styles.hero}>
-          <View style={styles.logoWell}>
-            <Ionicons name="storefront" size={22} color={colors.ink} />
-          </View>
+          <Pressable onPress={pickLogo} disabled={uploadingLogo}>
+            <View style={styles.logoWell}>
+              {uploadingLogo ? (
+                <ActivityIndicator color={colors.ink} />
+              ) : shop?.logoUrl ? (
+                <Image
+                  source={{ uri: logoImage(shop.logoUrl) }}
+                  style={styles.logoImage}
+                  resizeMode="cover"
+                />
+              ) : (
+                <Ionicons name="storefront" size={22} color={colors.ink} />
+              )}
+            </View>
+            {/* A small camera badge, so the well reads as tappable rather
+                than decorative. */}
+            <View style={styles.logoEdit}>
+              <Ionicons name="camera" size={10} color={colors.cream} />
+            </View>
+          </Pressable>
           <View style={{ flex: 1, gap: 3 }}>
             <Text style={styles.shopName} numberOfLines={1}>
               {shop?.name}
@@ -284,6 +354,18 @@ const styles = StyleSheet.create({
   topRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   title: { ...type.pageTitle, color: colors.cream },
   hero: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 4 },
+  logoImage: { width: "100%", height: "100%" },
+  logoEdit: {
+    position: "absolute",
+    bottom: -2,
+    right: -2,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: colors.ink,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   logoWell: {
     width: 52,
     height: 52,

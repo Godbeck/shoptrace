@@ -11,7 +11,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { borderWidth, card, colors, radius, spacing, type } from "@/theme";
 import { cedis, distance, dropPercent } from "@/lib/format";
 import { ImageWell, InkPill, StatusPill, VerifiedBadge } from "./ui";
-import { cardImage, logoImage } from "@/lib/images";
+import { cardImage, logoImage, thumb } from "@/lib/images";
 import type { CardProduct, CardShop } from "@/lib/viewModels";
 
 /* ---------------------------------------------------------- PriceFrom */
@@ -164,6 +164,7 @@ export const ProductRow = ({
   right,
   icon = "cube-outline",
   badge,
+  imageUrl,
   onPress,
 }: {
   name: string;
@@ -172,13 +173,15 @@ export const ProductRow = ({
   right?: React.ReactNode;
   icon?: React.ComponentProps<typeof Ionicons>["name"];
   badge?: { label: string; tone: "success" | "warning" | "danger" | "info" };
+  /** Optional product or shop photo; falls back to the icon. */
+  imageUrl?: string;
   onPress?: () => void;
 }) => (
   <Pressable
     onPress={onPress}
     style={({ pressed }) => [styles.row, pressed && { opacity: 0.9 }]}
   >
-    <ImageWell size={52} icon={icon} />
+    <ImageWell size={52} uri={thumb(imageUrl)} icon={icon} />
     <View style={{ flex: 1, gap: 3 }}>
       <Text style={styles.productName} numberOfLines={1}>
         {name}

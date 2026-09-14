@@ -39,12 +39,13 @@ import {
 } from "@/components/ui";
 import { borderWidth, colors, radius, spacing, type } from "@/theme";
 import { cedis, distance } from "@/lib/format";
-import { api, type ApiProduct } from "@/lib/api";
+import { api, type ApiProduct, type ApiVariant } from "@/lib/api";
 import { useAsync, useCoords } from "@/lib/useApi";
 import { useSession } from "@/lib/session";
 import { useCart } from "@/lib/cart";
 import { useShop } from "@/lib/shop";
 import { heroImage, pickRepresentative, thumb } from "@/lib/images";
+import { variantLabel } from "@/lib/categories";
 import {
   reliabilityLabel,
   stockLabel,
@@ -59,6 +60,7 @@ type Offer = {
   inStock: boolean;
   condition: string;
   imageUrls?: string[];
+  variants?: ApiVariant[];
   isSelected: boolean;
   stockConfirmedAt?: string;
   stockConfidence?: StockConfidence;
@@ -109,6 +111,9 @@ export default function ProductDetail() {
   // Hero images that failed to load, so a dead URL falls back to the category
   // icon instead of leaving a 260px hole where the product should be.
   const [brokenHero, setBrokenHero] = useState<string[]>([]);
+  // Which variant is chosen, per offer. Each shop stocks its own colours and
+  // sizes, so the choice cannot be a single value for the whole screen.
+  const [chosen, setChosen] = useState<Record<string, string>>({});
   const { width } = useWindowDimensions();
 
   // Bringing the price-alert field above the keyboard.
@@ -122,7 +127,10 @@ export default function ProductDetail() {
   const revealAlertField = () => {
     // A beat, so the keyboard has started animating and the inset is applied.
     setTimeout(() => {
-      scrollRef.current?.scrollTo({ y: Math.max(alertY.current - 90, 0), animated: true });
+      scrollRef.current?.scrollTo({
+        y: Math.max(alertY.current - 90, 0),
+        animated: true,
+      });
     }, 120);
   };
 
@@ -149,7 +157,7 @@ export default function ProductDetail() {
   if (loading) {
     return (
       <View style={{ flex: 1 }}>
-        <ScreenHeader title="Product detail" right={<CartButton />} />
+        <ScreenHeader title="Product Detail" right={<CartButton />} />
         <ActivityIndicator color={colors.ink} style={{ marginTop: 40 }} />
       </View>
     );
@@ -158,7 +166,7 @@ export default function ProductDetail() {
   if (error || !data) {
     return (
       <View style={{ flex: 1 }}>
-        <ScreenHeader title="Product detail" right={<CartButton />} />
+        <ScreenHeader title="Product Detail" right={<CartButton />} />
         <EmptyState
           icon="cloud-offline-outline"
           title={error ?? "Product not found"}
@@ -183,17 +191,41 @@ export default function ProductDetail() {
       notify({ title: "That shop is out of stock" });
       return;
     }
+
+    // A product that varies cannot be added "in general" - the merchant would
+    // not know what to pack, and the server refuses it anyway.
+    const variants = offer.variants ?? [];
+    const variant = variants.length
+      ? variants.find((v) => v._id === chosen[offer._id])
+      : undefined;
+
+    if (variants.length && !variant) {
+      notify({ title: "Choose an option first" });
+      return;
+    }
+    if (variant && variant.stockCount < 1) {
+      notify({ title: "That option is sold out" });
+      return;
+    }
     setAddingFrom(offer._id);
     add(
       {
         productId: offer._id,
+        variantId: variant?._id,
+        variantLabel: variant ? variantLabel(variant) : undefined,
         name: product.name,
+        // THIS shop's photo, not the hero - the cart must show what this
+        // particular shop is selling, at this condition.
+        imageUrl: offer.imageUrls?.[0],
         brand: product.brand,
-        price: offer.price,
-        category: product.category,
+        // A variant can set its own price - size 45 often costs more.
+        price: variant?.price ?? offer.price,
+        category: product.categories?.[0] ?? "Other",
         shopId: offer.shop._id,
         shopName: offer.shop.name,
-        stockCount: offer.stockCount,
+        // The chosen shelf's stock, not the product total - the cart's "+"
+        // must stop at what this option actually has.
+        stockCount: variant ? variant.stockCount : offer.stockCount,
         stockConfidence: offer.stockConfidence,
         needsConfirmation: offer.needsConfirmation,
       },
@@ -201,7 +233,9 @@ export default function ProductDetail() {
     );
     notify({
       title: `Added from ${offer.shop.name}`,
-      body: `${cedis(offer.price)} · ${offer.stockCount} in stock`,
+      body: variant
+        ? `${variantLabel(variant)} · ${cedis(variant.price ?? offer.price)} · ${variant.stockCount} in stock`
+        : `${cedis(offer.price)} · ${offer.stockCount} in stock`,
       tone: "success",
     });
     setTimeout(() => setAddingFrom(null), 400);
@@ -262,7 +296,7 @@ export default function ProductDetail() {
 
   return (
     <View style={{ flex: 1 }}>
-      <ScreenHeader title="Product detail" right={<CartButton />} />
+      <ScreenHeader title="Product Detail" right={<CartButton />} />
 
       <ScrollView
         ref={scrollRef}
@@ -284,9 +318,7 @@ export default function ProductDetail() {
               pagingEnabled
               showsHorizontalScrollIndicator={false}
               onMomentumScrollEnd={(e) =>
-                setHeroIndex(
-                  Math.round(e.nativeEvent.contentOffset.x / width),
-                )
+                setHeroIndex(Math.round(e.nativeEvent.contentOffset.x / width))
               }
             >
               {heroImages.map((url) => (
@@ -329,7 +361,7 @@ export default function ProductDetail() {
         ) : (
           <View style={styles.imageArea}>
             <Ionicons
-              name={iconForCategory(product.category)}
+              name={iconForCategory(product.categories?.[0] ?? "Other")}
               size={64}
               color={colors.textMuted}
             />
@@ -339,25 +371,37 @@ export default function ProductDetail() {
         <View style={{ paddingHorizontal: spacing.gutter, gap: 10 }}>
           {/* The price row is the heart of the screen. */}
           <Card>
-            <View style={styles.categoryChip}>
-              <Text style={styles.categoryText}>{product.category}</Text>
+            <View style={styles.categoryRow}>
+              {(product.categories ?? []).map((c) => (
+                <View key={c} style={styles.categoryChip}>
+                  <Text style={styles.categoryText}>{c}</Text>
+                </View>
+              ))}
             </View>
 
             <Text style={styles.name}>{product.name}</Text>
-            {product.brand ? <Text style={styles.brand}>{product.brand}</Text> : null}
+            {product.brand ? (
+              <Text style={styles.brand}>{product.brand}</Text>
+            ) : null}
 
             <View style={styles.priceRow}>
               {spread ? <Text style={styles.from}>from</Text> : null}
               <Text style={styles.priceHero}>{cedis(lowest)}</Text>
               {spread ? (
-                <Text style={styles.spread}>— {cedis(highest)} across shops</Text>
+                <Text style={styles.spread}>
+                  — {cedis(highest)} across shops
+                </Text>
               ) : null}
             </View>
 
             <Divider />
 
             <View style={styles.availability}>
-              <Ionicons name="storefront-outline" size={15} color={colors.ink} />
+              <Ionicons
+                name="storefront-outline"
+                size={15}
+                color={colors.ink}
+              />
               <Text style={styles.availabilityText}>
                 {offers.length > 0 ? (
                   <>
@@ -387,7 +431,10 @@ export default function ProductDetail() {
           </View>
 
           {comparison.loading ? (
-            <ActivityIndicator color={colors.ink} style={{ marginVertical: 16 }} />
+            <ActivityIndicator
+              color={colors.ink}
+              style={{ marginVertical: 16 }}
+            />
           ) : offers.length === 0 ? (
             <Card>
               <Text style={styles.quiet}>
@@ -398,6 +445,14 @@ export default function ProductDetail() {
           ) : (
             offers.map((offer, index) => {
               const best = index === 0 && offers.length > 1;
+              // Once an option is chosen, every number on this card is about
+              // THAT shelf. Showing the product total beside a sold-out size
+              // is how a customer ends up at a 409 on the checkout screen.
+              const picked = offer.variants?.find(
+                (v) => v._id === chosen[offer._id],
+              );
+              const shownPrice = picked?.price ?? offer.price;
+              const shownStock = picked ? picked.stockCount : offer.stockCount;
               const note = trustNote(offer);
               const reliability = reliabilityLabel(offer.fulfilmentRate);
               return (
@@ -441,10 +496,17 @@ export default function ProductDetail() {
                       <VerifiedBadge />
                     </View>
                     <View style={{ alignItems: "flex-end", gap: 5 }}>
-                      <Text style={styles.offerPrice}>{cedis(offer.price)}</Text>
-                      {/* Stock per shop, worded by how recently the merchant
-                          vouched for it. A stale claim shows no number at all. */}
-                      <StatusPill {...stockLabel(offer)} />
+                      <Text style={styles.offerPrice}>
+                        {cedis(shownPrice)}
+                      </Text>
+                      {/* Stock for the CHOSEN option, worded by how recently
+                          the merchant vouched for it. A stale claim shows no
+                          number at all. Showing the product total beside a
+                          sold-out size is how a customer reaches a 409 at
+                          checkout. */}
+                      <StatusPill
+                        {...stockLabel({ ...offer, stockCount: shownStock })}
+                      />
                       {reliability ? <StatusPill {...reliability} /> : null}
                     </View>
                   </View>
@@ -457,6 +519,52 @@ export default function ProductDetail() {
                         color={colors.textSecondary}
                       />
                       <Text style={styles.trustText}>{note}</Text>
+                    </View>
+                  ) : null}
+
+                  {offer.variants?.length ? (
+                    <View style={{ gap: 7 }}>
+                      <Text style={styles.optionLabel}>Choose an option</Text>
+                      <View style={styles.optionWrap}>
+                        {offer.variants.map((v) => {
+                          const active = chosen[offer._id] === v._id;
+                          const soldOut = v.stockCount < 1;
+                          return (
+                            <Pressable
+                              key={v._id}
+                              disabled={soldOut}
+                              onPress={() =>
+                                setChosen((c) => ({ ...c, [offer._id]: v._id }))
+                              }
+                              style={[
+                                styles.option,
+                                active && styles.optionActive,
+                                soldOut && styles.optionOut,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.optionText,
+                                  active && { color: colors.cream },
+                                  soldOut && { color: colors.textMuted },
+                                ]}
+                              >
+                                {variantLabel(v)}
+                                {v.price != null && v.price !== offer.price
+                                  ? ` · ${cedis(v.price)}`
+                                  : ""}
+                              </Text>
+                              {/* Sold-out options stay visible rather than
+                                  disappearing - "they have it, just not in my
+                                  size" is useful, and a shrinking list looks
+                                  like a bug. */}
+                              {soldOut ? (
+                                <Text style={styles.optionOutText}>Sold out</Text>
+                              ) : null}
+                            </Pressable>
+                          );
+                        })}
+                      </View>
                     </View>
                   ) : null}
 
@@ -510,7 +618,11 @@ export default function ProductDetail() {
           >
             <View style={styles.alertRow}>
               <View style={styles.alertWell}>
-                <Ionicons name="notifications-outline" size={17} color={colors.ink} />
+                <Ionicons
+                  name="notifications-outline"
+                  size={17}
+                  color={colors.ink}
+                />
               </View>
               <View style={{ flex: 1, gap: 2 }}>
                 <Text style={styles.alertTitle}>Set a price alert</Text>
@@ -530,7 +642,11 @@ export default function ProductDetail() {
                 onFocus={revealAlertField}
                 returnKeyType="done"
               />
-              <Button label="Set alert" onPress={setAlert} loading={savingAlert} />
+              <Button
+                label="Set alert"
+                onPress={setAlert}
+                loading={savingAlert}
+              />
             </View>
           </Card>
 
@@ -550,7 +666,9 @@ export default function ProductDetail() {
                           styles.bar,
                           {
                             height: h,
-                            backgroundColor: isLatest ? colors.ink : colors.border,
+                            backgroundColor: isLatest
+                              ? colors.ink
+                              : colors.border,
                           },
                         ]}
                       />
@@ -608,6 +726,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  categoryRow: { flexDirection: "row", flexWrap: "wrap", gap: 5, marginBottom: 9 },
   categoryChip: {
     alignSelf: "flex-start",
     backgroundColor: colors.cream,
@@ -655,6 +774,21 @@ const styles = StyleSheet.create({
     padding: spacing.card,
     gap: 11,
   },
+  optionLabel: { fontSize: 11, fontWeight: "500", color: colors.textSecondary },
+  optionWrap: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  option: {
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: borderWidth.hairline,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
+    alignItems: "center",
+  },
+  optionActive: { backgroundColor: colors.ink, borderColor: colors.ink },
+  optionOut: { backgroundColor: colors.creamTint, borderColor: colors.border },
+  optionText: { fontSize: 11.5, fontWeight: "500", color: colors.textPrimary },
+  optionOutText: { fontSize: 8.5, color: colors.textMuted, marginTop: 1 },
   bestRow: { flexDirection: "row" },
   offerTop: { flexDirection: "row", alignItems: "center", gap: 11 },
   shopName: { ...type.cardTitle, color: colors.textPrimary },
@@ -669,7 +803,12 @@ const styles = StyleSheet.create({
     borderRadius: radius.button,
     padding: 10,
   },
-  trustText: { flex: 1, fontSize: 10.5, color: colors.textSecondary, lineHeight: 15 },
+  trustText: {
+    flex: 1,
+    fontSize: 10.5,
+    color: colors.textSecondary,
+    lineHeight: 15,
+  },
   alertRow: { flexDirection: "row", alignItems: "center", gap: 11 },
   alertWell: {
     width: 36,

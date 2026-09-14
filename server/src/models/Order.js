@@ -12,6 +12,13 @@ const orderItemSchema = new mongoose.Schema(
     price: { type: Number, required: true },
     quantity: { type: Number, required: true, min: 1 },
     imageUrl: { type: String, default: "" },
+    // Which variant was bought. The id is kept so a release can put the stock
+    // back on the right row; colour and size are SNAPSHOTS, like name and
+    // price, so the order still reads "Blue / 45" a year later even if the
+    // merchant has since deleted that variant.
+    variant: { type: mongoose.Schema.Types.ObjectId },
+    variantColor: { type: String, default: "" },
+    variantSize: { type: String, default: "" },
     lineTotal: { type: Number, required: true },
   },
   { _id: false },

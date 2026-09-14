@@ -24,8 +24,21 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const CART_KEY = "shoptrace.cart";
 
+/**
+ * What makes two cart lines the same line.
+ *
+ * The variant is part of the identity, not a detail hanging off it: size 45
+ * and size 40 of the same shoe are two different shelves with two different
+ * stock numbers, and merging them would send one quantity against a shelf
+ * that cannot fill it. The server keys checkout the same way.
+ */
+export const lineKey = (l: { productId: string; variantId?: string }) =>
+  `${l.productId}|${l.variantId ?? ""}`;
 export type CartLine = {
   productId: string;
+  /** Which colour/size was chosen. Absent for products that do not vary. */
+  variantId?: string;
+  variantLabel?: string;
   name: string;
   brand?: string;
   price: number;
@@ -82,13 +95,15 @@ export const CartProvider = ({ children }: { children: React.ReactNode }) => {
   const add = useCallback(
     (line: Omit<CartLine, "quantity">, quantity = 1) => {
       setLines((current) => {
-        const existing = current.find((l) => l.productId === line.productId);
+        const key = lineKey(line);
+        const existing = current.find((l) => lineKey(l) === key);
 
         if (existing) {
-          // Adding the same product again tops up the quantity rather than
-          // creating a second line - the server merges duplicates anyway.
+          // Adding the same product AND variant again tops up the quantity
+          // rather than creating a second line - the server merges
+          // duplicates anyway.
           return current.map((l) =>
-            l.productId === line.productId
+            lineKey(l) === key
               ? {
                   ...l,
                   ...line,
@@ -104,20 +119,20 @@ export const CartProvider = ({ children }: { children: React.ReactNode }) => {
     [],
   );
 
-  const setQuantity = useCallback((productId: string, quantity: number) => {
+  const setQuantity = useCallback((key: string, quantity: number) => {
     setLines((current) =>
       quantity <= 0
-        ? current.filter((l) => l.productId !== productId)
+        ? current.filter((l) => lineKey(l) !== key)
         : current.map((l) =>
-            l.productId === productId
+            lineKey(l) === key
               ? { ...l, quantity: Math.min(quantity, l.stockCount) }
               : l,
           ),
     );
   }, []);
 
-  const remove = useCallback((productId: string) => {
-    setLines((current) => current.filter((l) => l.productId !== productId));
+  const remove = useCallback((key: string) => {
+    setLines((current) => current.filter((l) => lineKey(l) !== key));
   }, []);
 
   const clear = useCallback(() => setLines([]), []);
@@ -139,6 +154,8 @@ export const CartProvider = ({ children }: { children: React.ReactNode }) => {
       setQuantity,
       remove,
       clear,
+      // Any variant of the product counts - the product screen only needs to
+      // know whether it is in the cart at all.
       has: (productId: string) => lines.some((l) => l.productId === productId),
     };
   }, [lines, add, setQuantity, remove, clear]);

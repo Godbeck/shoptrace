@@ -160,10 +160,10 @@ const safeParse = (text: string) => {
  * are read from `.name` and `.type` on the object, and the picker knows the
  * real mime type more reliably than a filename extension does.
  */
-export const uploadImages = async (
+export const uploadImages = async <T = { count: number; images: { url: string; publicId: string }[] }>(
   path: string,
   files: { uri: string; name: string; type: string }[],
-): Promise<{ count: number; images: { url: string; publicId: string }[] }> => {
+): Promise<T> => {
   const form = new FormData();
   for (const file of files) {
     const handle = new FsFile(file.uri);
@@ -257,14 +257,29 @@ export type ApiPaymentMethod = {
   isDefault: boolean;
 };
 
+export type ApiVariant = {
+  _id: string;
+  color?: string;
+  size?: string;
+  stockCount: number;
+  /** Absent means "use the product price". */
+  price?: number;
+};
+
 export type ApiProduct = {
   _id: string;
   name: string;
   brand?: string;
-  category: string;
+  /**
+   * A product can sit in several categories. The FIRST is primary - the icon
+   * on a card, the chip on a row - and the order is the merchant's.
+   */
+  categories: string[];
   description?: string;
   price: number;
   stockCount: number;
+  /** Empty for a product that does not vary. */
+  variants?: ApiVariant[];
   inStock: boolean;
   imageUrls: string[];
   condition?: string;

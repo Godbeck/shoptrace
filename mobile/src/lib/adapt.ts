@@ -35,7 +35,8 @@ export const toCardProduct = (p: ApiProduct): CardProduct => ({
   _id: p._id,
   name: p.name,
   brand: p.brand,
-  category: p.category,
+  category: p.categories?.[0] ?? "Other",
+  categories: p.categories ?? [],
   fromPrice: p.price,
   shopCount: 1,
   // The first image is the cover, by the same convention the product form uses.

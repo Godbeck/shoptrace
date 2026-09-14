@@ -37,6 +37,7 @@ import { api, type ApiProduct, type ApiShop } from "@/lib/api";
 import { useAsync, useCoords } from "@/lib/useApi";
 import { metresBetween } from "@/lib/adapt";
 import { useSession } from "@/lib/session";
+import { cardImage, logoImage } from "@/lib/images";
 
 export default function ShopProfile() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -118,6 +119,7 @@ export default function ShopProfile() {
         <View style={styles.hero}>
           <ImageWell
             size={60}
+            uri={logoImage(shop.logoUrl)}
             icon={iconForCategory(shop.categories?.[0] ?? "Other")}
           />
           <Text style={styles.shopName}>{shop.name}</Text>
@@ -189,7 +191,8 @@ export default function ShopProfile() {
                     <ImageWell
                       style={{ height: 88, width: "100%" }}
                       radius={0}
-                      icon={iconForCategory(p.category)}
+                      uri={cardImage(p.imageUrls?.[0])}
+                      icon={iconForCategory(p.categories?.[0] ?? "Other")}
                     />
                     <View style={{ padding: 10, gap: 5 }}>
                       <Text style={styles.gridName} numberOfLines={2}>

@@ -19,7 +19,8 @@ import { Button, Card, Divider, EmptyState, ImageWell, StatusPill } from "@/comp
 import { iconForCategory } from "@/components/cards";
 import { borderWidth, colors, radius, spacing, type } from "@/theme";
 import { cedis } from "@/lib/format";
-import { useCart, type CartLine } from "@/lib/cart";
+import { lineKey, useCart, type CartLine } from "@/lib/cart";
+import { thumb } from "@/lib/images";
 
 export default function CartScreen() {
   const router = useRouter();
@@ -96,9 +97,10 @@ export default function CartScreen() {
                 {group.lines.map((line) => {
                   const atMax = line.quantity >= line.stockCount;
                   return (
-                    <View key={line.productId} style={styles.line}>
+                    <View key={lineKey(line)} style={styles.line}>
                       <ImageWell
                         size={52}
+                        uri={thumb(line.imageUrl)}
                         icon={iconForCategory(line.category)}
                       />
 
@@ -113,7 +115,7 @@ export default function CartScreen() {
                         <View style={styles.qtyRow}>
                           <Pressable
                             onPress={() =>
-                              setQuantity(line.productId, line.quantity - 1)
+                              setQuantity(lineKey(line), line.quantity - 1)
                             }
                             hitSlop={6}
                             style={styles.qtyButton}
@@ -123,7 +125,7 @@ export default function CartScreen() {
                           <Text style={styles.qtyValue}>{line.quantity}</Text>
                           <Pressable
                             onPress={() =>
-                              setQuantity(line.productId, line.quantity + 1)
+                              setQuantity(lineKey(line), line.quantity + 1)
                             }
                             hitSlop={6}
                             disabled={atMax}
@@ -146,7 +148,7 @@ export default function CartScreen() {
                           {cedis(line.price * line.quantity)}
                         </Text>
                         <Pressable
-                          onPress={() => remove(line.productId)}
+                          onPress={() => remove(lineKey(line))}
                           hitSlop={8}
                         >
                           <Ionicons

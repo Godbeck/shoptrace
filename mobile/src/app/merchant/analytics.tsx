@@ -25,6 +25,7 @@ import { borderWidth, colors, radius, spacing, type } from "@/theme";
 import { cedis } from "@/lib/format";
 import { api } from "@/lib/api";
 import { useAsync } from "@/lib/useApi";
+import { thumb } from "@/lib/images";
 import type { MerchantSummary } from "@/lib/merchantTypes";
 
 const PERIODS = [
@@ -189,7 +190,7 @@ export default function Analytics() {
                 {top.map((p, i) => (
                   <View key={p.product} style={styles.topRowItem}>
                     <Text style={styles.rank}>{i + 1}</Text>
-                    <ImageWell size={38} />
+                    <ImageWell size={38} uri={thumb(p.imageUrl)} />
                     <View style={{ flex: 1, gap: 4 }}>
                       <Text style={styles.topName} numberOfLines={1}>
                         {p.name}

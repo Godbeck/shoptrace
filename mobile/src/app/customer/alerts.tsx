@@ -29,6 +29,7 @@ import { api, type ApiPriceAlert, type ApiProduct } from "@/lib/api";
 import { useAsync } from "@/lib/useApi";
 import { useSession } from "@/lib/session";
 import { SignInRequired } from "@/components/SignInRequired";
+import { thumb } from "@/lib/images";
 
 export default function PriceAlerts() {
   const router = useRouter();
@@ -124,14 +125,14 @@ export default function PriceAlerts() {
                     product ? router.push(`/product/${product._id}`) : undefined
                   }
                 >
-                  <ImageWell size={48} />
+                  <ImageWell size={48} uri={thumb(product?.imageUrls?.[0])} />
                   <View style={{ flex: 1, gap: 3 }}>
                     <Text style={styles.name} numberOfLines={1}>
                       {product?.name ?? "Product"}
                     </Text>
                     <Text style={styles.meta}>
                       {product?.shopName ?? ""}
-                      {product?.category ? ` · ${product.category}` : ""}
+                      {product?.categories?.length ? ` · ${product.categories?.[0] ?? ""}` : ""}
                     </Text>
                     <View style={styles.priceLine}>
                       <Text style={styles.current}>{cedis(current)}</Text>

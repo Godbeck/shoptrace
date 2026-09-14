@@ -25,6 +25,7 @@ import { api, type ApiOrder } from "@/lib/api";
 import { useAsync } from "@/lib/useApi";
 import { useSession } from "@/lib/session";
 import { flowFor, overallStatus, STATUS_META } from "@/lib/orderStatus";
+import { thumb } from "@/lib/images";
 
 export default function OrderTracking() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -247,7 +248,10 @@ export default function OrderTracking() {
 
                 {sub.items.map((item) => (
                   <View key={item.product} style={styles.itemRow}>
-                    <ImageWell size={40} />
+                    {/* The order's OWN snapshot, not the live product. An
+                        order must look the same in a year even if the
+                        merchant has since changed the photo. */}
+                    <ImageWell size={40} uri={thumb(item.imageUrl)} />
                     <View style={{ flex: 1, gap: 2 }}>
                       <Text style={styles.itemName} numberOfLines={1}>
                         {item.name}

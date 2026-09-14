@@ -21,6 +21,7 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { InkHeader } from "@/components/headers";
 import { iconForCategory } from "@/components/cards";
+import { thumb } from "@/lib/images";
 import { Button, Card, Chip, EmptyState, ImageWell, StatusPill } from "@/components/ui";
 import { borderWidth, colors, radius, spacing, type } from "@/theme";
 import { cedis } from "@/lib/format";
@@ -178,7 +179,11 @@ export default function Listings() {
               <Card key={p._id}>
                 <View style={styles.row}>
                   <View>
-                    <ImageWell size={52} icon={iconForCategory(p.category)} />
+                    <ImageWell
+                      size={52}
+                      uri={thumb(p.imageUrls?.[0])}
+                      icon={iconForCategory(p.categories?.[0] ?? "Other")}
+                    />
                     {p.stockCount === 0 ? (
                       <View style={styles.outBadge}>
                         <Text style={styles.outBadgeText}>Out</Text>
@@ -191,7 +196,9 @@ export default function Listings() {
                       {p.name}
                     </Text>
                     <Text style={styles.category}>
-                      {p.category}
+                      {/* All of them, so a merchant can see at a glance where
+                          the listing will surface. */}
+                      {(p.categories ?? []).join(" · ")}
                       {p.brand ? ` · ${p.brand}` : ""}
                     </Text>
                     <View style={styles.priceRow}>

@@ -13,7 +13,7 @@
  * on Cloudinary with nothing pointing at it. Sweeping orphans is a job for the
  * background worker, not for this screen.
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Image } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import {
@@ -24,6 +24,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -35,12 +36,26 @@ import { borderWidth, colors, radius, spacing, type } from "@/theme";
 import { api, uploadImages, type ApiProduct } from "@/lib/api";
 import { useAsync } from "@/lib/useApi";
 import { useSession } from "@/lib/session";
-import { CATEGORIES } from "@/lib/categories";
+import {
+  CATEGORIES,
+  COLOR_SUGGESTIONS,
+  variantLabel,
+  variantsForCategories,
+} from "@/lib/categories";
 import { thumb } from "@/lib/images";
 
 // A product is exactly one category, unlike a shop.
 const PRODUCT_CATEGORIES = CATEGORIES;
 const CONDITIONS = ["Brand new", "Used", "Refurbished"];
+
+/** A variant while it is being edited - numbers are strings in a text field. */
+type FormVariant = {
+  _id?: string;
+  color: string;
+  size: string;
+  stockCount: string;
+  price: string;
+};
 
 export default function ProductForm() {
   const router = useRouter();
@@ -55,32 +70,119 @@ export default function ProductForm() {
     [id],
   );
 
-  const [ready, setReady] = useState(!editing);
+  /**
+   * Which product id has been loaded into the fields.
+   *
+   * This was a boolean seeded with `useState(!editing)`, and that was the bug:
+   * useState only ever uses its initial value on the FIRST render, and
+   * useLocalSearchParams returns {} on that render while the params resolve.
+   * So `editing` was false, `ready` latched to true, and the fill below could
+   * never run - every edit opened a blank form.
+   *
+   * A ref holding the id is immune to that, and also handles editing one
+   * product then another without a remount.
+   */
+  const loadedId = useRef<string | null>(null);
   const [name, setName] = useState("");
   const [brand, setBrand] = useState("");
-  const [category, setCategory] = useState("Electronics");
+  const [categories, setCategories] = useState<string[]>(["Electronics"]);
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState("");
   const [stock, setStock] = useState("");
   const [condition, setCondition] = useState("Brand new");
   const [busy, setBusy] = useState(false);
   const [imageUrls, setImageUrls] = useState<string[]>([]);
+  // A draft row lives outside the saved list so a half-typed option cannot be
+  // submitted by accident.
+  const [variants, setVariants] = useState<FormVariant[]>([]);
+  const [draftColor, setDraftColor] = useState("");
+  const [draftSize, setDraftSize] = useState("");
+  const [draftStock, setDraftStock] = useState("");
+  const [draftPrice, setDraftPrice] = useState("");
   const [uploading, setUploading] = useState(false);
+  // The UNION of every chosen category's axes. A jacket in Fashion AND Sports
+  // & Outdoors still offers sizes; taking the intersection would strip the
+  // axis the moment a merchant described their product more fully.
+  const spec = variantsForCategories(categories);
 
-  // Fill the form once, when the product arrives.
-  if (editing && existing.data && !ready) {
+  // Fill the fields once per product, as soon as it arrives.
+  if (id && existing.data && loadedId.current !== id) {
     const p = existing.data;
     setName(p.name);
     setBrand(p.brand ?? "");
-    setCategory(p.category);
+    setCategories(p.categories ?? []);
     setDescription(p.description ?? "");
     setPrice(String(p.price));
     setStock(String(p.stockCount));
     setImageUrls(p.imageUrls ?? []);
-    setReady(true);
+    setVariants(
+      (p.variants ?? []).map((v) => ({
+        // The id is preserved so saving EDITS the existing row. Dropping it
+        // would create a new variant and orphan the old id, which is sitting
+        // on live carts and on every order that ever bought it.
+        _id: v._id,
+        color: v.color ?? "",
+        size: v.size ?? "",
+        stockCount: String(v.stockCount ?? 0),
+        price: v.price != null ? String(v.price) : "",
+      })),
+    );
+    loadedId.current = id;
   }
 
   const MAX_IMAGES = 5;
+
+  /** The draft row as a variant, or null when nothing has been typed into it. */
+  const draftAsVariant = (): FormVariant | null => {
+    const color = spec.color ? draftColor.trim() : "";
+    const size = spec.size ? draftSize.trim() : "";
+    if (!color && !size) return null;
+    return {
+      color,
+      size,
+      stockCount: draftStock.trim() || "0",
+      price: draftPrice.trim(),
+    };
+  };
+
+  const addVariant = () => {
+    const draft = draftAsVariant();
+    if (!draft) {
+      notify({ title: "Give the option a colour or a size" });
+      return;
+    }
+    const { color, size } = draft;
+    const already = variants.some(
+      (v) =>
+        v.color.toLowerCase() === color.toLowerCase() &&
+        v.size.toLowerCase() === size.toLowerCase(),
+    );
+    if (already) {
+      notify({ title: `${variantLabel({ color, size })} is already listed` });
+      return;
+    }
+
+    setVariants((current) => [...current, draft]);
+    setDraftColor("");
+    setDraftSize("");
+    setDraftStock("");
+    setDraftPrice("");
+  };
+
+  const setVariantStock = (index: number, value: string) =>
+    setVariants((current) =>
+      current.map((v, i) => (i === index ? { ...v, stockCount: value } : v)),
+    );
+
+  const removeVariant = (index: number) =>
+    setVariants((current) => current.filter((_, i) => i !== index));
+
+  // With options, the product's stock is their sum - the server derives it the
+  // same way, so the merchant sees the number that will actually be stored.
+  const variantTotal = variants.reduce(
+    (total, v) => total + (Number(v.stockCount) || 0),
+    0,
+  );
 
   const pickImages = async () => {
     // Asked only when the button is pressed, not on mount: a merchant who
@@ -130,8 +232,8 @@ export default function ProductForm() {
     setImageUrls((current) => current.filter((u) => u !== url));
 
   const submit = async () => {
-    if (!name.trim() || !category || !price.trim()) {
-      notify({ title: "Name, category and price are required" });
+    if (!name.trim() || categories.length === 0 || !price.trim()) {
+      notify({ title: "Name, at least one category, and price are required" });
       return;
     }
     const priceValue = Number(price);
@@ -146,15 +248,39 @@ export default function ProductForm() {
       return;
     }
 
+    // A row typed into the draft fields but never added with the button is
+    // still something the merchant meant. Silently dropping it is how "I added
+    // Black, 10" turned into a product with no options at all - so it is
+    // committed here rather than thrown away at the moment of saving.
+    const draft = draftAsVariant();
+    const allVariants =
+      draft &&
+      !variants.some(
+        (v) =>
+          v.color.toLowerCase() === draft.color.toLowerCase() &&
+          v.size.toLowerCase() === draft.size.toLowerCase(),
+      )
+        ? [...variants, draft]
+        : variants;
+
     const body = {
       name: name.trim(),
       brand: brand.trim() || undefined,
-      category,
+      categories,
       description: description.trim(),
       price: priceValue,
       stockCount: stockValue,
       condition,
       imageUrls,
+      variants: allVariants.map((v) => ({
+        ...(v._id ? { _id: v._id } : {}),
+        color: v.color,
+        size: v.size,
+        stockCount: Number(v.stockCount) || 0,
+        // Empty string means "no variant price", NOT free. The server treats
+        // an absent price as "use the product price".
+        ...(v.price.trim() ? { price: Number(v.price) } : {}),
+      })),
     };
 
     setBusy(true);
@@ -175,7 +301,7 @@ export default function ProductForm() {
     }
   };
 
-  if (editing && existing.loading && !ready) {
+  if (id && existing.loading && loadedId.current !== id) {
     return (
       <View style={{ flex: 1 }}>
         <InkHeader>
@@ -263,7 +389,9 @@ export default function ProductForm() {
                   color={colors.textTertiary}
                 />
                 <Text style={styles.uploadTitle}>
-                  {imageUrls.length === 0 ? "Add product photos" : "Add another"}
+                  {imageUrls.length === 0
+                    ? "Add product photos"
+                    : "Add another"}
                 </Text>
                 <Text style={styles.uploadSub}>
                   {imageUrls.length >= MAX_IMAGES
@@ -275,7 +403,7 @@ export default function ProductForm() {
           </Pressable>
         </Card>
 
-        <Section title="Product details">
+        <Section title="Product Details">
           <Field
             label="Product name"
             value={name}
@@ -284,14 +412,32 @@ export default function ProductForm() {
           />
 
           <View>
-            <Text style={styles.fieldLabel}>Category</Text>
+            <Text style={styles.fieldLabel}>
+              Categories{categories.length > 1 ? ` · ${categories.length}` : ""}
+            </Text>
+            <Text style={[styles.hint, { marginBottom: 7 }]}>
+              Pick every one it belongs in. Running shoes are genuinely Shoes
+              and Sports &amp; Outdoors, and listing both means it turns up in
+              both searches.
+            </Text>
             <View style={styles.wrapRow}>
               {PRODUCT_CATEGORIES.map((c) => {
-                const selected = category === c;
+                const selected = categories.includes(c);
                 return (
                   <Pressable
                     key={c}
-                    onPress={() => setCategory(c)}
+                    onPress={() =>
+                      setCategories((current) =>
+                        current.includes(c)
+                          ? // Never empty. Deselecting the last one would leave
+                            // a product the API refuses to save, discovered only
+                            // at the bottom of the form.
+                            current.length === 1
+                            ? current
+                            : current.filter((x) => x !== c)
+                          : [...current, c],
+                      )
+                    }
                     style={[
                       styles.pill,
                       selected && {
@@ -314,7 +460,12 @@ export default function ProductForm() {
             </View>
           </View>
 
-          <Field label="Brand" value={brand} onChangeText={setBrand} placeholder="Infinix" />
+          <Field
+            label="Brand"
+            value={brand}
+            onChangeText={setBrand}
+            placeholder="Infinix"
+          />
           <Field
             label="Description"
             value={description}
@@ -336,17 +487,158 @@ export default function ProductForm() {
           />
           {editing ? (
             <Text style={styles.hint}>
-              Changing the price writes a price-history record automatically, and
-              fires any customer alerts watching this product.
+              Changing the price writes a price-history record automatically,
+              and fires any customer alerts watching this product.
             </Text>
           ) : null}
-          <Field
-            label="Stock quantity"
-            value={stock}
-            onChangeText={setStock}
-            keyboardType="number-pad"
-            placeholder="12"
-          />
+          {variants.length === 0 ? (
+            <Field
+              label="Stock quantity"
+              value={stock}
+              onChangeText={setStock}
+              keyboardType="number-pad"
+              placeholder="12"
+            />
+          ) : (
+            // Hidden rather than disabled once options exist. A greyed-out
+            // field still reads as a number the merchant should care about,
+            // and this one is now derived from the rows below.
+            <View style={styles.derivedTotal}>
+              <Text style={styles.derivedLabel}>Total stock</Text>
+              <Text style={styles.derivedValue}>
+                {variantTotal} across {variants.length}{" "}
+                {variants.length === 1 ? "option" : "options"}
+              </Text>
+            </View>
+          )}
+
+          {spec.color || spec.size ? (
+            <>
+              <Divider />
+              <View style={{ gap: 4 }}>
+                <Text style={styles.fieldLabel}>
+                  Colours and {spec.size ? spec.size.label.toLowerCase() : "options"}
+                </Text>
+                <Text style={styles.hint}>
+                  Optional. Add one row per combination you actually stock, with
+                  its own count — a customer buying {spec.size ? spec.size.label.toLowerCase() : "an option"} sees that
+                  number, not the total.
+                </Text>
+              </View>
+
+              {variants.map((v, index) => (
+                <View key={`${v.color}|${v.size}`} style={styles.variantRow}>
+                  <View style={{ flex: 1, gap: 2 }}>
+                    <Text style={styles.variantName}>{variantLabel(v)}</Text>
+                    {v.price.trim() ? (
+                      <Text style={styles.variantPrice}>GH₵ {v.price}</Text>
+                    ) : null}
+                  </View>
+                  <TextInput
+                    value={v.stockCount}
+                    onChangeText={(t: string) => setVariantStock(index, t)}
+                    keyboardType="number-pad"
+                    style={styles.variantStock}
+                    placeholder="0"
+                    placeholderTextColor={colors.textMuted}
+                  />
+                  <Pressable onPress={() => removeVariant(index)} hitSlop={8}>
+                    <Ionicons name="close" size={16} color={colors.textTertiary} />
+                  </Pressable>
+                </View>
+              ))}
+
+              {/* The draft row. Suggestions are chips, but the field stays
+                  typeable — no fixed list survives a real market. */}
+              <View style={styles.draftBox}>
+                {spec.color ? (
+                  <>
+                    <Field
+                      label="Colour"
+                      value={draftColor}
+                      onChangeText={setDraftColor}
+                      placeholder="Blue"
+                    />
+                    <View style={styles.wrapRow}>
+                      {COLOR_SUGGESTIONS.map((c) => (
+                        <Pressable
+                          key={c}
+                          onPress={() => setDraftColor(c)}
+                          style={[styles.suggest, draftColor === c && styles.suggestOn]}
+                        >
+                          <Text
+                            style={[
+                              styles.suggestText,
+                              draftColor === c && { color: colors.cream },
+                            ]}
+                          >
+                            {c}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </>
+                ) : null}
+
+                {spec.size ? (
+                  <>
+                    <Field
+                      label={spec.size.label}
+                      value={draftSize}
+                      onChangeText={setDraftSize}
+                      placeholder={spec.size.suggestions[0] ?? "One size"}
+                    />
+                    <View style={styles.wrapRow}>
+                      {spec.size.suggestions.map((o: string) => (
+                        <Pressable
+                          key={o}
+                          onPress={() => setDraftSize(o)}
+                          style={[styles.suggest, draftSize === o && styles.suggestOn]}
+                        >
+                          <Text
+                            style={[
+                              styles.suggestText,
+                              draftSize === o && { color: colors.cream },
+                            ]}
+                          >
+                            {o}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </>
+                ) : null}
+
+                <View style={{ flexDirection: "row", gap: 9 }}>
+                  <Field
+                    label="How many"
+                    value={draftStock}
+                    onChangeText={setDraftStock}
+                    keyboardType="number-pad"
+                    placeholder="10"
+                    style={{ flex: 1 }}
+                  />
+                  <Field
+                    label="Price (optional)"
+                    prefix="GH₵"
+                    value={draftPrice}
+                    onChangeText={setDraftPrice}
+                    keyboardType="decimal-pad"
+                    placeholder={price || "same"}
+                    style={{ flex: 1 }}
+                  />
+                </View>
+
+                <Button
+                  label="Add option"
+                  variant="outline"
+                  small
+                  icon="add"
+                  onPress={addVariant}
+                />
+              </View>
+            </>
+          ) : null}
 
           <View>
             <Text style={styles.fieldLabel}>Condition</Text>
@@ -417,6 +709,55 @@ const Section = ({
 const styles = StyleSheet.create({
   topRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   title: { flex: 1, ...type.pageTitle, color: colors.cream },
+  derivedTotal: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: colors.creamTint,
+    borderRadius: radius.button,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  derivedLabel: { fontSize: 11, color: colors.textSecondary },
+  derivedValue: { fontSize: 12, fontWeight: "500", color: colors.textPrimary },
+  variantRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderWidth: borderWidth.hairline,
+    borderColor: colors.border,
+    borderRadius: radius.button,
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+  },
+  variantName: { fontSize: 12.5, fontWeight: "500", color: colors.textPrimary },
+  variantPrice: { fontSize: 10, color: colors.textTertiary },
+  variantStock: {
+    width: 52,
+    textAlign: "center",
+    fontSize: 13,
+    color: colors.textPrimary,
+    borderWidth: borderWidth.hairline,
+    borderColor: colors.border,
+    borderRadius: radius.button,
+    paddingVertical: 6,
+  },
+  draftBox: {
+    gap: 9,
+    backgroundColor: colors.creamTint,
+    borderRadius: radius.card,
+    padding: 11,
+  },
+  suggest: {
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    borderWidth: borderWidth.hairline,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
+  },
+  suggestOn: { backgroundColor: colors.ink, borderColor: colors.ink },
+  suggestText: { fontSize: 11, color: colors.textPrimary },
   uploadZone: {
     alignItems: "center",
     gap: 5,

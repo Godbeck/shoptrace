@@ -38,9 +38,9 @@ const MERCHANTS = [
       deliveryRange: "city",
     },
     products: [
-      { name: "Infinix Hot 40i", brand: "Infinix", category: "Electronics", price: 1450.5, stockCount: 12, description: "8GB RAM, 256GB storage, 5000mAh battery. Sealed in box with a one-year warranty." },
-      { name: "Oraimo 20000mAh power bank", brand: "Oraimo", category: "Electronics", price: 185, stockCount: 30, description: "Fast charge, dual USB output, digital battery display." },
-      { name: 'Samsung 43" smart TV', brand: "Samsung", category: "Electronics", price: 3250, stockCount: 4, description: "43 inch, 4K UHD, built-in streaming apps." },
+      { name: "Infinix Hot 40i", brand: "Infinix", categories: ["Electronics"], price: 1450.5, stockCount: 12, description: "8GB RAM, 256GB storage, 5000mAh battery. Sealed in box with a one-year warranty." },
+      { name: "Oraimo 20000mAh power bank", brand: "Oraimo", categories: ["Electronics"], price: 185, stockCount: 30, description: "Fast charge, dual USB output, digital battery display." },
+      { name: 'Samsung 43" smart TV', brand: "Samsung", categories: ["Electronics"], price: 3250, stockCount: 4, description: "43 inch, 4K UHD, built-in streaming apps." },
     ],
   },
   {
@@ -58,9 +58,9 @@ const MERCHANTS = [
     },
     products: [
       // Same phone, cheaper than Osu - this is what makes compare interesting.
-      { name: "Infinix Hot 40i", brand: "Infinix", category: "Electronics", price: 1399, stockCount: 8, description: "8GB RAM, 256GB storage. Sealed, with warranty card." },
-      { name: "Oraimo 20000mAh power bank", brand: "Oraimo", category: "Electronics", price: 199, stockCount: 15, description: "Fast charge power bank with digital display." },
-      { name: 'Binatone 16" standing fan', brand: "Binatone", category: "Home", price: 349, stockCount: 10, description: "Three speed settings, adjustable height, wide oscillation." },
+      { name: "Infinix Hot 40i", brand: "Infinix", categories: ["Electronics"], price: 1399, stockCount: 8, description: "8GB RAM, 256GB storage. Sealed, with warranty card." },
+      { name: "Oraimo 20000mAh power bank", brand: "Oraimo", categories: ["Electronics"], price: 199, stockCount: 15, description: "Fast charge power bank with digital display." },
+      { name: 'Binatone 16" standing fan', brand: "Binatone", categories: ["Home"], price: 349, stockCount: 10, description: "Three speed settings, adjustable height, wide oscillation." },
     ],
   },
   {
@@ -77,9 +77,9 @@ const MERCHANTS = [
       deliveryRange: "area",
     },
     products: [
-      { name: "Ghacem Super Rapid cement 50kg", brand: "Ghacem", category: "Hardware", price: 95, stockCount: 200, description: "50kg bag, Super Rapid grade, suitable for structural work." },
-      { name: "Aluminium roofing sheet 3m", brand: "Domod", category: "Hardware", price: 180, stockCount: 60, description: "3 metre corrugated aluminium sheet, 0.45mm gauge." },
-      { name: "Heavy duty wheelbarrow", brand: "Jumbo", category: "Hardware", price: 420, stockCount: 12, description: "Reinforced steel tray with pneumatic tyre." },
+      { name: "Ghacem Super Rapid cement 50kg", brand: "Ghacem", categories: ["Hardware"], price: 95, stockCount: 200, description: "50kg bag, Super Rapid grade, suitable for structural work." },
+      { name: "Aluminium roofing sheet 3m", brand: "Domod", categories: ["Hardware"], price: 180, stockCount: 60, description: "3 metre corrugated aluminium sheet, 0.45mm gauge." },
+      { name: "Heavy duty wheelbarrow", brand: "Jumbo", categories: ["Hardware"], price: 420, stockCount: 12, description: "Reinforced steel tray with pneumatic tyre." },
     ],
   },
   {
@@ -96,9 +96,9 @@ const MERCHANTS = [
       deliveryRange: "city",
     },
     products: [
-      { name: "Ankara two-piece set", brand: "Kantamanto Studio", category: "Fashion", price: 260, stockCount: 14, description: "Wax print top and skirt, tailored to order in three days." },
-      { name: "Men's slim fit shirt", brand: "Accra Threads", category: "Fashion", price: 120, stockCount: 25, description: "Cotton blend, long sleeve, available in four colours." },
-      { name: "Handmade leather sandals", brand: "Kumasi Leather", category: "Fashion", price: 180, stockCount: 20, description: "Full grain leather, hand stitched, sizes 39 to 46." },
+      { name: "Ankara two-piece set", brand: "Kantamanto Studio", categories: ["Fashion"], price: 260, stockCount: 14, description: "Wax print top and skirt, tailored to order in three days." },
+      { name: "Men's slim fit shirt", brand: "Accra Threads", categories: ["Fashion"], price: 120, stockCount: 25, description: "Cotton blend, long sleeve, available in four colours." },
+      { name: "Handmade leather sandals", brand: "Kumasi Leather", categories: ["Fashion"], price: 180, stockCount: 20, description: "Full grain leather, hand stitched, sizes 39 to 46." },
     ],
   },
   {
@@ -116,9 +116,9 @@ const MERCHANTS = [
     },
     products: [
       // Cheapest fan of the three shops carrying it.
-      { name: 'Binatone 16" standing fan', brand: "Binatone", category: "Home", price: 320, stockCount: 6, description: "Three speed settings with wide oscillation." },
-      { name: "Century 30L water heater", brand: "Century", category: "Home", price: 890, stockCount: 5, description: "30 litre storage heater, thermostat controlled." },
-      { name: "Ghacem Super Rapid cement 50kg", brand: "Ghacem", category: "Hardware", price: 102, stockCount: 150, description: "50kg bag, Super Rapid grade." },
+      { name: 'Binatone 16" standing fan', brand: "Binatone", categories: ["Home"], price: 320, stockCount: 6, description: "Three speed settings with wide oscillation." },
+      { name: "Century 30L water heater", brand: "Century", categories: ["Home"], price: 890, stockCount: 5, description: "30 litre storage heater, thermostat controlled." },
+      { name: "Ghacem Super Rapid cement 50kg", brand: "Ghacem", categories: ["Hardware"], price: 102, stockCount: 150, description: "50kg bag, Super Rapid grade." },
     ],
   },
 ];

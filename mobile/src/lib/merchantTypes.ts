@@ -37,6 +37,8 @@ export type MerchantSummary = {
   topProducts: {
     product: string;
     name: string;
+    /** Snapshot taken at checkout, not the live product photo. */
+    imageUrl?: string;
     units: number;
     orders: number;
     revenue: number;

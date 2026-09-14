@@ -24,6 +24,7 @@ import { api, type ApiOrder } from "@/lib/api";
 import { useCoords } from "@/lib/useApi";
 import { useSession } from "@/lib/session";
 import { useCart, type CartLine } from "@/lib/cart";
+import { thumb } from "@/lib/images";
 import { SignInRequired } from "@/components/SignInRequired";
 
 const STEPS = ["Cart", "Delivery", "Payment", "Done"];
@@ -81,6 +82,9 @@ export default function Checkout() {
         longitude: coords.longitude,
         items: lines.map((l) => ({
           product: l.productId,
+          // Which shelf. Omitted for products that do not vary; the server
+          // refuses a variant product that arrives without one.
+          variant: l.variantId,
           quantity: l.quantity,
         })),
       });
@@ -234,7 +238,11 @@ export default function Checkout() {
 
             {(group.lines ?? group.items).map((line: any) => (
               <View key={line.productId ?? line.product} style={styles.line}>
-                <ImageWell size={48} icon={iconForCategory(line.category ?? "Other")} />
+                <ImageWell
+                  size={48}
+                  uri={thumb(line.imageUrl)}
+                  icon={iconForCategory(line.category ?? "Other")}
+                />
                 <View style={{ flex: 1, gap: 3 }}>
                   <Text style={styles.lineName} numberOfLines={2}>
                     {line.name}

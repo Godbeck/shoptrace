@@ -23,6 +23,7 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { InkHeader } from "@/components/headers";
 import { iconForCategory } from "@/components/cards";
+import { thumb } from "@/lib/images";
 import { Button, Card, EmptyState, ImageWell } from "@/components/ui";
 import { borderWidth, colors, radius, spacing, type } from "@/theme";
 import { cedis, relativeTime } from "@/lib/format";
@@ -150,7 +151,11 @@ export default function StockCheck() {
               return (
                 <Card key={product._id} style={{ gap: 12 }}>
                   <View style={styles.row}>
-                    <ImageWell size={46} icon={iconForCategory(product.category)} />
+                    <ImageWell
+                      size={46}
+                      uri={thumb(product.imageUrls?.[0])}
+                      icon={iconForCategory(product.categories?.[0] ?? "Other")}
+                    />
                     <View style={{ flex: 1, gap: 3 }}>
                       <Text style={styles.name} numberOfLines={1}>
                         {product.name}

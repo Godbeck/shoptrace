@@ -109,13 +109,18 @@ export const createOrder = async (req, res) => {
     }
 
     // 1. Validate and normalise the cart before touching the database.
-    //    Duplicate lines for the same product are merged, so a cart with
-    //    "2 of X" and "1 of X" reserves 3 once rather than racing itself.
-    const quantityByProduct = new Map();
+    //    Duplicate lines for the same product AND variant are merged, so a
+    //    cart with "2 of X" and "1 of X" reserves 3 once rather than racing
+    //    itself. The variant is part of the key: size 40 and size 45 are two
+    //    different shelves and must never be merged into one reservation.
+    const lineByKey = new Map();
 
     for (const item of items) {
       if (!mongoose.isValidObjectId(item?.product)) {
         throw new CheckoutError(400, "Cart contains an invalid product id");
+      }
+      if (item.variant != null && !mongoose.isValidObjectId(item.variant)) {
+        throw new CheckoutError(400, "Cart contains an invalid variant id");
       }
       const quantity = Number(item.quantity);
       if (!Number.isInteger(quantity) || quantity < 1) {
@@ -124,12 +129,18 @@ export const createOrder = async (req, res) => {
           "Every cart item needs a whole quantity of at least 1",
         );
       }
-      const key = item.product.toString();
-      quantityByProduct.set(key, (quantityByProduct.get(key) || 0) + quantity);
+
+      const productId = item.product.toString();
+      const variantId = item.variant ? item.variant.toString() : null;
+      const key = `${productId}|${variantId ?? ""}`;
+      const existing = lineByKey.get(key);
+
+      if (existing) existing.quantity += quantity;
+      else lineByKey.set(key, { productId, variantId, quantity });
     }
 
     // 2. One query for every product in the cart, not one per item.
-    const productIds = [...quantityByProduct.keys()];
+    const productIds = [...new Set([...lineByKey.values()].map((l) => l.productId))];
     const products = await Product.find({
       _id: { $in: productIds },
       isActive: true,
@@ -181,16 +192,39 @@ export const createOrder = async (req, res) => {
     }
 
     // 4. Group the cart by shop. One sub-order per shop.
+    //    Iterating the CART lines rather than the products, because one
+    //    product can appear on several lines now - one per variant.
+    const productsById = new Map(products.map((p) => [p._id.toString(), p]));
     const groups = new Map();
-    for (const product of products) {
+
+    for (const line of lineByKey.values()) {
+      const product = productsById.get(line.productId);
       const shopId = product.shop.toString();
+
       if (!groups.has(shopId)) {
         groups.set(shopId, { shop: shopsById.get(shopId), lines: [] });
       }
-      groups.get(shopId).lines.push({
-        product,
-        quantity: quantityByProduct.get(product._id.toString()),
-      });
+
+      let variant = null;
+      if (line.variantId) {
+        variant = product.variants?.id(line.variantId);
+        if (!variant) {
+          throw new CheckoutError(
+            409,
+            `The option you chose for ${product.name} is no longer available`,
+          );
+        }
+      } else if (product.variants?.length) {
+        // A product that varies cannot be bought "in general" - somebody has
+        // to have chosen a colour or a size, or the merchant does not know
+        // what to pack.
+        throw new CheckoutError(
+          400,
+          `Choose an option for ${product.name} before checking out`,
+        );
+      }
+
+      groups.get(shopId).lines.push({ product, variant, quantity: line.quantity });
     }
 
     // Fetched once and passed down, so a five-shop order does not read the
@@ -207,30 +241,41 @@ export const createOrder = async (req, res) => {
       const orderItems = [];
       let subtotal = 0;
 
-      for (const { product, quantity } of lines) {
-        // 5. The reservation. Condition and decrement in one atomic write.
-        const reserved = await reserveStock(product._id, quantity);
+      for (const { product, variant, quantity } of lines) {
+        // 5. The reservation. Condition and decrement in one atomic write,
+        //    against the chosen variant's own shelf when there is one.
+        const reserved = await reserveStock(product._id, quantity, variant?._id);
 
         if (!reserved) {
-          throw new CheckoutError(
-            409,
-            `${product.name} no longer has ${quantity} in stock`,
-          );
+          const what = variant
+            ? `${product.name} (${[variant.color, variant.size].filter(Boolean).join(" / ")})`
+            : product.name;
+          throw new CheckoutError(409, `${what} no longer has ${quantity} in stock`);
         }
-        reservations.push({ product: product._id, quantity });
+        reservations.push({
+          product: product._id,
+          quantity,
+          variant: variant?._id ?? null,
+        });
 
         // 6. The snapshot. Copied values, not a live reference, so this order
         //    still reads correctly if the product is later renamed or repriced.
-        const lineTotal = round(product.price * quantity);
+        //    The price comes from the variant when it sets one - a size 45 can
+        //    cost more than a size 40 - and falls back to the product price.
+        const unitPrice = variant?.price ?? product.price;
+        const lineTotal = round(unitPrice * quantity);
         subtotal = round(subtotal + lineTotal);
 
         orderItems.push({
           product: product._id,
           name: product.name,
           brand: product.brand,
-          price: product.price,
+          price: unitPrice,
           quantity,
           imageUrl: product.imageUrls?.[0] || "",
+          variant: variant?._id ?? undefined,
+          variantColor: variant?.color ?? "",
+          variantSize: variant?.size ?? "",
           lineTotal,
         });
       }

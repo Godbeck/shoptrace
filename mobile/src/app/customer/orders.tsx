@@ -21,6 +21,7 @@ import { TabHeader, Tabs } from "@/components/headers";
 import { Card, Divider, EmptyState, ImageWell, StatusPill } from "@/components/ui";
 import { colors, spacing, type } from "@/theme";
 import { cedis, relativeTime } from "@/lib/format";
+import { thumb } from "@/lib/images";
 import { api, type ApiOrder } from "@/lib/api";
 import { useAsync } from "@/lib/useApi";
 import { overallStatus } from "@/lib/orderStatus";
@@ -124,7 +125,7 @@ export default function MyOrders() {
 
                 {first ? (
                   <View style={styles.itemRow}>
-                    <ImageWell size={46} />
+                    <ImageWell size={46} uri={thumb(first.imageUrl)} />
                     <View style={{ flex: 1, gap: 3 }}>
                       <Text style={styles.itemName} numberOfLines={1}>
                         {first.name}
